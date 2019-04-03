@@ -1,0 +1,106 @@
+pin_peripheral.txt
+03/11/2019
+
+NOTE: 
+PB1 could be moved to port E freeing ADC12_IN9
+PC4 could be moved to port E freeing ADC12_IN14
+
+
+Control Panel pin/peripherals
+
+* = new or changed
+$ = new or available ADC input
+
+ PA
+  0 - Blue pushbutton
+ $1 - ADC123_IN1 spare
+  2 - USART2 TX UARTGATE 
+  3 - USART2 RX UARTGATE
+ $4 LRCK Audio part spare(?)
+ $5 ADC12_IN5 - Total battery current
+ $6 ADC12_IN6 - Motor #1 current
+ $7 ADC12_IN7 - Motor #2 current
+  8 Output:pushpull - Beeper (TIM1CH1)
+  9 USB
+ 10 USB
+ 11 USB
+ 12 USB
+ 13 SWDIO
+ 14 SWD CLK
+ 15
+
+
+ PB
+ $0 ADC12_IN8 - Speed control pot
+  1 Input:pullup - control panel detection pin/jumper
+  2
+  3 T_SWO
+  4
+ *5 [CAN2 RX]
+ *6 [CAN2 TX] SCL Audio part
+  7
+  8
+  9 SDC Audio part
+ 10 USART3 TX UARTLCD Onboard part MP45DT02 CLK in
+ 11 USART3 RX UARTLCD
+ 12 SPI2 NSS
+ 13 SPI2 SCK
+ 14 SPI2 MISO
+ 15 SPI2 MOSI
+
+ PC
+  0 OTG_FS_PowerSwitchOn
+  1 ADC12_IN11 - CL reading
+  2 ADC12_IN12 - +12 Raw
+  3 PDM out onboard part
+ *4 ADC12_IN14 - ##### ALSO! CAN driver RS output:pushpull
+ $5 ADC12_IN15 - +5v sensor supply volage
+  6 USART6 TX XPRT/UARTGPS
+  7 USART6 RX XPRT/UARTGPS
+  8
+  9
+ 10
+ 11
+ 12 SD in audio part
+ 13
+ 14
+ 15
+
+ PD
+  0 CAN1 RX
+  1 CAN1 TX
+  2
+  3
+  4
+  5 USB FS overcurrent output
+  6
+  7
+  8 Contactor PWM
+  9
+ 10
+ 11
+ 12 LED Green
+ 13 LED Orange
+ 14 LED Red
+ 15 LED Blue
+
+
+PE
+ 0
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+
+

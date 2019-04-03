@@ -1,0 +1,2035 @@
+ARM GAS  /tmp/ccorA0ob.s 			page 1
+
+
+   1              		.syntax unified
+   2              		.cpu cortex-m4
+   3              		.eabi_attribute 27, 1
+   4              		.eabi_attribute 28, 1
+   5              		.fpu fpv4-sp-d16
+   6              		.eabi_attribute 20, 1
+   7              		.eabi_attribute 21, 1
+   8              		.eabi_attribute 23, 3
+   9              		.eabi_attribute 24, 1
+  10              		.eabi_attribute 25, 1
+  11              		.eabi_attribute 26, 1
+  12              		.eabi_attribute 30, 1
+  13              		.eabi_attribute 34, 1
+  14              		.eabi_attribute 18, 4
+  15              		.thumb
+  16              		.syntax unified
+  17              		.file	"can_iface.c"
+  18              		.text
+  19              	.Ltext0:
+  20              		.cfi_sections	.debug_frame
+  21              		.section	.text.canmsg_compress,"ax",%progbits
+  22              		.align	2
+  23              		.thumb
+  24              		.thumb_func
+  26              	canmsg_compress:
+  27              	.LFB129:
+  28              		.file 1 "Ourwares/can_iface.c"
+   1:Ourwares/can_iface.c **** /******************************************************************************
+   2:Ourwares/can_iface.c **** * File Name          : can_iface.c
+   3:Ourwares/can_iface.c **** * Date First Issued  : 05-28-2015/01/02/2019
+   4:Ourwares/can_iface.c **** * Board              : F103 or F4
+   5:Ourwares/can_iface.c **** * Description        : Interface CAN FreeRTOS to STM32CubeMX HAL can driver 
+   6:Ourwares/can_iface.c **** *******************************************************************************/
+   7:Ourwares/can_iface.c **** /*
+   8:Ourwares/can_iface.c **** 01/02/2019 - Hack "can_driver" to inferface with STM32CubeMX FreeRTOS HAL CAN driver
+   9:Ourwares/can_iface.c **** 
+  10:Ourwares/can_iface.c **** Instead of a common CAN msg block pool for all CAN modules, this version has separate
+  11:Ourwares/can_iface.c **** linked lists for each CAN module for TX.  RX0, RX1 use a common FreeRTOS queue.  
+  12:Ourwares/can_iface.c **** This simplifies the issue of disabling of interrupts
+  13:Ourwares/can_iface.c **** 
+  14:Ourwares/can_iface.c **** 06/02/2016 - Add rejection of loading bogus CAN ids.
+  15:Ourwares/can_iface.c **** 
+  16:Ourwares/can_iface.c **** 06/14/2015 rev 720: can.driver.[ch] replaced with can.driverR.[ch] and 
+  17:Ourwares/can_iface.c ****   old can.driver[ch] deleted from svn.
+  18:Ourwares/can_iface.c **** */
+  19:Ourwares/can_iface.c **** 
+  20:Ourwares/can_iface.c **** /* The following sends outgoing CAN msgs back into FreeRTOS CAN receive queue */
+  21:Ourwares/can_iface.c **** #define CANMSGLOOPBACK
+  22:Ourwares/can_iface.c **** 
+  23:Ourwares/can_iface.c **** #ifdef CHEATINGONHAL
+  24:Ourwares/can_iface.c **** #include "stm32f407.h" 	// **** CHEATING (processor dependent) ****
+  25:Ourwares/can_iface.c **** #endif
+  26:Ourwares/can_iface.c **** 
+  27:Ourwares/can_iface.c **** #include <malloc.h>
+  28:Ourwares/can_iface.c **** #include "stm32f4xx_hal.h"
+  29:Ourwares/can_iface.c **** #include "stm32f4xx_hal_can.h"
+  30:Ourwares/can_iface.c **** #include "can_iface.h"
+ARM GAS  /tmp/ccorA0ob.s 			page 2
+
+
+  31:Ourwares/can_iface.c **** #include "DTW_counter.h"
+  32:Ourwares/can_iface.c **** 
+  33:Ourwares/can_iface.c **** /* subroutine declarations */
+  34:Ourwares/can_iface.c **** static void loadmbx2(struct CAN_CTLBLOCK* pctl);
+  35:Ourwares/can_iface.c **** static void moveremove2(struct CAN_CTLBLOCK* pctl);
+  36:Ourwares/can_iface.c **** 
+  37:Ourwares/can_iface.c **** #define MAXCANMODULES	4	// Max number of CAN modules + 1
+  38:Ourwares/can_iface.c **** /* Pointers to control blocks for each CAN module */
+  39:Ourwares/can_iface.c **** static struct CAN_CTLBLOCK* pctllist[MAXCANMODULES];
+  40:Ourwares/can_iface.c **** static struct CAN_CTLBLOCK** ppctllist = NULL;	// Pointer to end of active pctllist
+  41:Ourwares/can_iface.c **** 
+  42:Ourwares/can_iface.c **** /* *************************************************************************
+  43:Ourwares/can_iface.c ****  * static void canmsg_compress(struct CANRCVBUF *pcan, CAN_RxHeaderTypeDef *phal, uint8_t *pdat);
+  44:Ourwares/can_iface.c ****  * @brief	: Convert silly HAL expanded format to hardware compressed format
+  45:Ourwares/can_iface.c ****  * @param	: pcan = pointer to useful hardware format output
+  46:Ourwares/can_iface.c ****  * @param	: phal = pointer to HAL header input
+  47:Ourwares/can_iface.c ****  * @param	: pdat = pointer to HAL payload data array input
+  48:Ourwares/can_iface.c ****  * *************************************************************************/
+  49:Ourwares/can_iface.c **** static void canmsg_compress(struct CANRCVBUF *pcan, CAN_RxHeaderTypeDef *phal, uint8_t *pdat)
+  50:Ourwares/can_iface.c **** {
+  29              		.loc 1 50 0
+  30              		.cfi_startproc
+  31              		@ args = 0, pretend = 0, frame = 0
+  32              		@ frame_needed = 0, uses_anonymous_args = 0
+  33              		@ link register save eliminated.
+  34              	.LVL0:
+  35 0000 10B4     		push	{r4}
+  36              	.LCFI0:
+  37              		.cfi_def_cfa_offset 4
+  38              		.cfi_offset 4, -4
+  51:Ourwares/can_iface.c **** 	if (phal->IDE != 0)
+  39              		.loc 1 51 0
+  40 0002 8B68     		ldr	r3, [r1, #8]
+  41 0004 23B1     		cbz	r3, .L2
+  52:Ourwares/can_iface.c **** 	{ // Extended 29b CAN id
+  53:Ourwares/can_iface.c **** 		pcan->id = phal->IDE | (phal->ExtId << 3);
+  42              		.loc 1 53 0
+  43 0006 4C68     		ldr	r4, [r1, #4]
+  44 0008 43EAC403 		orr	r3, r3, r4, lsl #3
+  45 000c 0360     		str	r3, [r0]
+  46 000e 02E0     		b	.L3
+  47              	.L2:
+  54:Ourwares/can_iface.c **** 	}
+  55:Ourwares/can_iface.c **** 	else
+  56:Ourwares/can_iface.c **** 	{ // Standard 11b CAN id
+  57:Ourwares/can_iface.c **** 		pcan->id = phal->StdId << 21;
+  48              		.loc 1 57 0
+  49 0010 0B68     		ldr	r3, [r1]
+  50 0012 5B05     		lsls	r3, r3, #21
+  51 0014 0360     		str	r3, [r0]
+  52              	.L3:
+  58:Ourwares/can_iface.c **** 	}
+  59:Ourwares/can_iface.c **** 	pcan->id |= phal->RTR;
+  53              		.loc 1 59 0
+  54 0016 CB68     		ldr	r3, [r1, #12]
+  55 0018 0468     		ldr	r4, [r0]
+  56 001a 2343     		orrs	r3, r3, r4
+ARM GAS  /tmp/ccorA0ob.s 			page 3
+
+
+  57 001c 0360     		str	r3, [r0]
+  60:Ourwares/can_iface.c **** 	
+  61:Ourwares/can_iface.c **** 	pcan->dlc = (phal->DLC & 0xf);
+  58              		.loc 1 61 0
+  59 001e 0B69     		ldr	r3, [r1, #16]
+  60 0020 03F00F03 		and	r3, r3, #15
+  61 0024 4360     		str	r3, [r0, #4]
+  62:Ourwares/can_iface.c **** 
+  63:Ourwares/can_iface.c **** 	pcan->cd.uc[0] = *(pdat+0);
+  62              		.loc 1 63 0
+  63 0026 1378     		ldrb	r3, [r2]	@ zero_extendqisi2
+  64 0028 0372     		strb	r3, [r0, #8]
+  64:Ourwares/can_iface.c **** 	pcan->cd.uc[1] = *(pdat+1);
+  65              		.loc 1 64 0
+  66 002a 5378     		ldrb	r3, [r2, #1]	@ zero_extendqisi2
+  67 002c 4372     		strb	r3, [r0, #9]
+  65:Ourwares/can_iface.c **** 	pcan->cd.uc[2] = *(pdat+2);
+  68              		.loc 1 65 0
+  69 002e 9378     		ldrb	r3, [r2, #2]	@ zero_extendqisi2
+  70 0030 8372     		strb	r3, [r0, #10]
+  66:Ourwares/can_iface.c **** 	pcan->cd.uc[3] = *(pdat+3);
+  71              		.loc 1 66 0
+  72 0032 D378     		ldrb	r3, [r2, #3]	@ zero_extendqisi2
+  73 0034 C372     		strb	r3, [r0, #11]
+  67:Ourwares/can_iface.c **** 	pcan->cd.uc[4] = *(pdat+4);
+  74              		.loc 1 67 0
+  75 0036 1379     		ldrb	r3, [r2, #4]	@ zero_extendqisi2
+  76 0038 0373     		strb	r3, [r0, #12]
+  68:Ourwares/can_iface.c **** 	pcan->cd.uc[5] = *(pdat+5);
+  77              		.loc 1 68 0
+  78 003a 5379     		ldrb	r3, [r2, #5]	@ zero_extendqisi2
+  79 003c 4373     		strb	r3, [r0, #13]
+  69:Ourwares/can_iface.c **** 	pcan->cd.uc[6] = *(pdat+6);
+  80              		.loc 1 69 0
+  81 003e 9379     		ldrb	r3, [r2, #6]	@ zero_extendqisi2
+  82 0040 8373     		strb	r3, [r0, #14]
+  70:Ourwares/can_iface.c **** 	pcan->cd.uc[7] = *(pdat+7);
+  83              		.loc 1 70 0
+  84 0042 D379     		ldrb	r3, [r2, #7]	@ zero_extendqisi2
+  85 0044 C373     		strb	r3, [r0, #15]
+  71:Ourwares/can_iface.c **** 	return;
+  72:Ourwares/can_iface.c **** }
+  86              		.loc 1 72 0
+  87 0046 5DF8044B 		ldr	r4, [sp], #4
+  88              	.LCFI1:
+  89              		.cfi_restore 4
+  90              		.cfi_def_cfa_offset 0
+  91 004a 7047     		bx	lr
+  92              		.cfi_endproc
+  93              	.LFE129:
+  95              		.section	.text.moveremove2,"ax",%progbits
+  96              		.align	2
+  97              		.thumb
+  98              		.thumb_func
+ 100              	moveremove2:
+ 101              	.LFB136:
+  73:Ourwares/can_iface.c **** /******************************************************************************
+ARM GAS  /tmp/ccorA0ob.s 			page 4
+
+
+  74:Ourwares/can_iface.c ****  * struct CANTAKEPTR* can_iface_add_take(struct CAN_CTLBLOCK*  pctl);
+  75:Ourwares/can_iface.c ****  * @brief 	: Create a 'take' pointer for accessing CAN msgs in the circular buffer
+  76:Ourwares/can_iface.c ****  * @param	: pctl = pointer to our CAN control block
+  77:Ourwares/can_iface.c ****  * @return	: pointer to pointer pointing to 'take' location in circular CAN buffer
+  78:Ourwares/can_iface.c ****  * 			:  NULL = Failed 
+  79:Ourwares/can_iface.c **** *******************************************************************************/
+  80:Ourwares/can_iface.c **** struct CANTAKEPTR* can_iface_add_take(struct CAN_CTLBLOCK*  pctl)
+  81:Ourwares/can_iface.c **** {
+  82:Ourwares/can_iface.c **** 	struct CANTAKEPTR* p;
+  83:Ourwares/can_iface.c **** 	
+  84:Ourwares/can_iface.c **** taskENTER_CRITICAL();
+  85:Ourwares/can_iface.c **** 	/* Get one measily pointer */
+  86:Ourwares/can_iface.c **** 	p = (struct CANTAKEPTR*)calloc(1, sizeof(struct CANTAKEPTR));
+  87:Ourwares/can_iface.c **** 	if (p == NULL){ taskEXIT_CRITICAL();return NULL;}
+  88:Ourwares/can_iface.c **** 
+  89:Ourwares/can_iface.c **** 	/* Initialize the pointer to curret add location of the circular buffer. */
+  90:Ourwares/can_iface.c ****    /* Given 'p', the beginning, end, and location CAN msgs are being added
+  91:Ourwares/can_iface.c ****       can be accessed. */
+  92:Ourwares/can_iface.c **** 	p->pcir  = &pctl->cirptrs;
+  93:Ourwares/can_iface.c **** 
+  94:Ourwares/can_iface.c **** 	/* Start the 'take' pointer at the position in the circular buffer where
+  95:Ourwares/can_iface.c ****       CAN msgs are currently being added. */
+  96:Ourwares/can_iface.c **** 	p->ptake = pctl->cirptrs.pwork;
+  97:Ourwares/can_iface.c **** 
+  98:Ourwares/can_iface.c **** taskEXIT_CRITICAL();
+  99:Ourwares/can_iface.c **** 	return p;
+ 100:Ourwares/can_iface.c **** }
+ 101:Ourwares/can_iface.c **** /******************************************************************************
+ 102:Ourwares/can_iface.c ****  * struct CANTAKEPTR* can_iface_mbx_init(struct CAN_CTLBLOCK*  pctl, osThreadId tskhandle, uint32_t
+ 103:Ourwares/can_iface.c ****  * @brief 	: Initialize the mailbox task notification and get a 'take pointer for it.
+ 104:Ourwares/can_iface.c ****  * @param	: tskhandle = task handle that will be used for notification; NULL = use current task
+ 105:Ourwares/can_iface.c ****  * @param	: notebit = notification bit if notifications used
+ 106:Ourwares/can_iface.c ****  * @return	: pointer to pointer pointing to 'take' location in circular CAN buffer 
+ 107:Ourwares/can_iface.c **** *******************************************************************************/
+ 108:Ourwares/can_iface.c **** struct CANTAKEPTR* can_iface_mbx_init(struct CAN_CTLBLOCK* pctl, osThreadId tskhandle, uint32_t not
+ 109:Ourwares/can_iface.c **** {
+ 110:Ourwares/can_iface.c **** 	if (tskhandle == NULL)
+ 111:Ourwares/can_iface.c **** 	{ // Here, use the current running Task
+ 112:Ourwares/can_iface.c **** 		tskhandle = xTaskGetCurrentTaskHandle();
+ 113:Ourwares/can_iface.c **** 	}
+ 114:Ourwares/can_iface.c **** 
+ 115:Ourwares/can_iface.c **** 	/* Notification of CAN msgs added to the circular buffer are only for one task. */
+ 116:Ourwares/can_iface.c **** 	pctl->tsknote.tskhandle = tskhandle;
+ 117:Ourwares/can_iface.c **** 	pctl->tsknote.notebit   = notebit;
+ 118:Ourwares/can_iface.c **** 
+ 119:Ourwares/can_iface.c **** 	/* The 'add' pointer was setup in 'can_iface_init' below */
+ 120:Ourwares/can_iface.c **** 	
+ 121:Ourwares/can_iface.c **** 	/* Get a 'take' pointer into the circular buffer */
+ 122:Ourwares/can_iface.c **** 	return can_iface_add_take(pctl);
+ 123:Ourwares/can_iface.c **** }
+ 124:Ourwares/can_iface.c **** /******************************************************************************
+ 125:Ourwares/can_iface.c ****  * struct CANRCVBUFN* can_iface_get_CANmsg(struct CANTAKEPTR* p);
+ 126:Ourwares/can_iface.c ****  * @brief 	: Get a pointer to the next available CAN msg and step ahead in the circular buffer
+ 127:Ourwares/can_iface.c ****  * @brief	: p = pointer to struct with 'take' and 'add' pointers
+ 128:Ourwares/can_iface.c ****  * @return	: pointer to CAN msg struct; NULL = no msgs available.
+ 129:Ourwares/can_iface.c **** *******************************************************************************/
+ 130:Ourwares/can_iface.c ****  struct CANRCVBUFN* can_iface_get_CANmsg(struct CANTAKEPTR* p)
+ARM GAS  /tmp/ccorA0ob.s 			page 5
+
+
+ 131:Ourwares/can_iface.c **** {
+ 132:Ourwares/can_iface.c **** 	struct CANRCVBUFN* ptmp = NULL;
+ 133:Ourwares/can_iface.c **** 	if (p->pcir->pwork == p->ptake) return ptmp;
+ 134:Ourwares/can_iface.c **** 
+ 135:Ourwares/can_iface.c **** 	ptmp = p->ptake;
+ 136:Ourwares/can_iface.c **** 	p->ptake += 1;
+ 137:Ourwares/can_iface.c **** 	if (p->ptake == p->pcir->pend) p->ptake = p->pcir->pbegin;
+ 138:Ourwares/can_iface.c **** 
+ 139:Ourwares/can_iface.c **** 	return ptmp;	
+ 140:Ourwares/can_iface.c **** }
+ 141:Ourwares/can_iface.c **** /******************************************************************************
+ 142:Ourwares/can_iface.c ****  * struct CAN_CTLBLOCK* can_iface_init(CAN_HandleTypeDef *phcan, uint8_t canidx, uint16_t numtx, ui
+ 143:Ourwares/can_iface.c ****  * @brief 	: Setup linked list for TX priority sorted buffering
+ 144:Ourwares/can_iface.c ****  * @param	: phcan = Pointer "handle" to HAL control block for CAN module
+ 145:Ourwares/can_iface.c ****  * @param	: cannum = CAN module index, CAN1 = 0, CAN2 = 1, CAN3 = 2
+ 146:Ourwares/can_iface.c ****  * @param	: numtx = number of CAN msgs for TX buffering
+ 147:Ourwares/can_iface.c ****  * @param	: numrx = number of incoming (and loopback) CAN msgs in circular buffer
+ 148:Ourwares/can_iface.c ****  * @return	: Pointer to our knows-all control block for this CAN
+ 149:Ourwares/can_iface.c ****  *		:  NULL = calloc failed
+ 150:Ourwares/can_iface.c ****  *		:  Pointer->ret = pointer to CAN control block for this CAN unit
+ 151:Ourwares/can_iface.c **** *******************************************************************************/
+ 152:Ourwares/can_iface.c **** /*
+ 153:Ourwares/can_iface.c **** 'main' initialization makes a call to this routine for each CAN module, i.e. CAN1, CAN2, CAN3.
+ 154:Ourwares/can_iface.c **** Return is a pointer to the control block.  Since the unmodified STM32CubeMX routines only
+ 155:Ourwares/can_iface.c **** pass their CAN module "handle" (pointer) upon interrupt a lookup is required to obtain
+ 156:Ourwares/can_iface.c **** the pointer to the buffers.  Therefore, these pointers are also saved.
+ 157:Ourwares/can_iface.c **** */
+ 158:Ourwares/can_iface.c **** struct CAN_CTLBLOCK* can_iface_init(CAN_HandleTypeDef *phcan, uint8_t canidx, uint16_t numtx, uint1
+ 159:Ourwares/can_iface.c **** {
+ 160:Ourwares/can_iface.c **** 	int i;
+ 161:Ourwares/can_iface.c **** 
+ 162:Ourwares/can_iface.c **** 	struct CAN_CTLBLOCK*  pctl;
+ 163:Ourwares/can_iface.c **** 	struct CAN_CTLBLOCK** ppx;
+ 164:Ourwares/can_iface.c **** 
+ 165:Ourwares/can_iface.c **** 	struct CAN_POOLBLOCK* plst;
+ 166:Ourwares/can_iface.c **** 	struct CAN_POOLBLOCK* ptmp;
+ 167:Ourwares/can_iface.c **** 
+ 168:Ourwares/can_iface.c **** 	struct CANRCVBUFN* pcann;
+ 169:Ourwares/can_iface.c **** 
+ 170:Ourwares/can_iface.c **** taskENTER_CRITICAL();
+ 171:Ourwares/can_iface.c **** 	/* Get a control block for this CAN module. */
+ 172:Ourwares/can_iface.c **** 	pctl = (struct CAN_CTLBLOCK*)calloc(1, sizeof(struct CAN_CTLBLOCK));
+ 173:Ourwares/can_iface.c **** 	if (pctl == NULL){ taskEXIT_CRITICAL();return NULL;}
+ 174:Ourwares/can_iface.c **** 
+ 175:Ourwares/can_iface.c **** 	/* Add HAL CAN control block "handle" to our control block */
+ 176:Ourwares/can_iface.c **** 	pctl->phcan = phcan; 
+ 177:Ourwares/can_iface.c **** 
+ 178:Ourwares/can_iface.c **** 	/* Save CAN module index (CAN1 = 0). */
+ 179:Ourwares/can_iface.c **** 	pctl->canidx = canidx;
+ 180:Ourwares/can_iface.c **** 
+ 181:Ourwares/can_iface.c **** 	/* Add new control block to list of control blocks */
+ 182:Ourwares/can_iface.c **** 	if (ppctllist != NULL) // Not first time?
+ 183:Ourwares/can_iface.c **** 	{ // Yes. Check for duplicates, i.e. check for bozo programmers
+ 184:Ourwares/can_iface.c **** 		ppx = &pctllist[0];	// NOTE: don't confuse ppctllist with pctllist
+ 185:Ourwares/can_iface.c **** 		while (ppx != ppctllist)
+ 186:Ourwares/can_iface.c **** 		{
+ 187:Ourwares/can_iface.c **** 			if ( (*ppx)->phcan == phcan)
+ARM GAS  /tmp/ccorA0ob.s 			page 6
+
+
+ 188:Ourwares/can_iface.c **** 			{
+ 189:Ourwares/can_iface.c **** 				taskEXIT_CRITICAL();
+ 190:Ourwares/can_iface.c **** 				return NULL; // Duplicate
+ 191:Ourwares/can_iface.c **** 			}
+ 192:Ourwares/can_iface.c **** 			ppx++;;
+ 193:Ourwares/can_iface.c **** 		}
+ 194:Ourwares/can_iface.c **** 	}
+ 195:Ourwares/can_iface.c **** 	else
+ 196:Ourwares/can_iface.c **** 	{
+ 197:Ourwares/can_iface.c **** 		ppctllist = &pctllist[0];
+ 198:Ourwares/can_iface.c **** 	}
+ 199:Ourwares/can_iface.c **** 	/* Save control block pointer on list, and advance list pointer */
+ 200:Ourwares/can_iface.c **** 	*ppctllist = pctl;	
+ 201:Ourwares/can_iface.c **** 	ppctllist++;
+ 202:Ourwares/can_iface.c **** 	if (ppctllist == &pctllist[MAXCANMODULES]) { taskEXIT_CRITICAL();return NULL;} //JIC too many entr
+ 203:Ourwares/can_iface.c **** 	
+ 204:Ourwares/can_iface.c **** 	/* Now that we have control block in memory, we can use it to return errors. 
+ 205:Ourwares/can_iface.c **** 	   by setting the error code in pctl->ret. */
+ 206:Ourwares/can_iface.c **** 
+ 207:Ourwares/can_iface.c **** 	/* Get CAN xmit linked list. */	
+ 208:Ourwares/can_iface.c **** 	if (numtx == 0)  {pctl->ret = -1; return pctl;} // Bogus tx buffering count
+ 209:Ourwares/can_iface.c **** 	ptmp = (struct CAN_POOLBLOCK*)calloc(numtx, sizeof(struct CAN_POOLBLOCK));
+ 210:Ourwares/can_iface.c **** 	if (ptmp == NULL){pctl->ret = -2; taskEXIT_CRITICAL(); return NULL;} // Get buff failed
+ 211:Ourwares/can_iface.c **** 
+ 212:Ourwares/can_iface.c **** 	/* Initialize links.  All are in the "free" list. */
+ 213:Ourwares/can_iface.c **** 	// Item: the last block is left with NULL in plinknext
+ 214:Ourwares/can_iface.c **** 	plst = &pctl->frii;
+ 215:Ourwares/can_iface.c **** 	for (i = 0; i < numtx; i++)
+ 216:Ourwares/can_iface.c **** 	{
+ 217:Ourwares/can_iface.c **** 		plst->plinknext = ptmp;
+ 218:Ourwares/can_iface.c **** 		plst = ptmp++;
+ 219:Ourwares/can_iface.c **** 	}
+ 220:Ourwares/can_iface.c **** 
+ 221:Ourwares/can_iface.c **** 	/* Setup circular buffer for receive CAN msgs */
+ 222:Ourwares/can_iface.c **** 	if (numrx == 0)  {pctl->ret = -3; return pctl;} // Bogus rx buffering count
+ 223:Ourwares/can_iface.c **** 	pcann = (struct CANRCVBUFN*)calloc(numrx, sizeof(struct CANRCVBUFN));
+ 224:Ourwares/can_iface.c **** 	if (pcann == NULL){pctl->ret = -4; taskEXIT_CRITICAL(); return NULL;} // Get buff failed
+ 225:Ourwares/can_iface.c **** 
+ 226:Ourwares/can_iface.c **** 	/* Initialize pointers for "add"ing CAN msgs to the circular buffer */
+ 227:Ourwares/can_iface.c **** 	pctl->cirptrs.pbegin = pcann;
+ 228:Ourwares/can_iface.c **** 	pctl->cirptrs.pwork  = pcann;
+ 229:Ourwares/can_iface.c **** 	pctl->cirptrs.pend   = pcann + numrx;
+ 230:Ourwares/can_iface.c **** 
+ 231:Ourwares/can_iface.c **** 	/* NOTE: pctl->tsknote gets initialized
+ 232:Ourwares/can_iface.c ****       when 'MailboxTask' calls 'can_iface_mbx_init' */
+ 233:Ourwares/can_iface.c **** 
+ 234:Ourwares/can_iface.c **** taskEXIT_CRITICAL();
+ 235:Ourwares/can_iface.c **** 	return pctl;	// Return pointer to control block
+ 236:Ourwares/can_iface.c **** }
+ 237:Ourwares/can_iface.c **** /******************************************************************************
+ 238:Ourwares/can_iface.c ****  * int can_driver_put(struct CAN_CTLBLOCK* pctl,struct CANRCVBUF *pcan,uint8_t maxretryct,uint8_t b
+ 239:Ourwares/can_iface.c ****  * @brief	: Get a free slot and add CAN msg
+ 240:Ourwares/can_iface.c ****  * @param	: pctl = pointer to control block for this CAN modules
+ 241:Ourwares/can_iface.c ****  * @param	: pcan = pointer to msg: id, dlc, data (common_can.h)
+ 242:Ourwares/can_iface.c ****  * @param	: maxretryct =  0 = use TERRMAXCOUNT; not zero = use this value.
+ 243:Ourwares/can_iface.c ****  * @param	: bits = Use these bits to set some conditions (see .h file)
+ 244:Ourwares/can_iface.c ****  * @return	:  0 = OK; 
+ARM GAS  /tmp/ccorA0ob.s 			page 7
+
+
+ 245:Ourwares/can_iface.c ****  *				: -1 = Buffer overrun (no free slots for the new msg)
+ 246:Ourwares/can_iface.c ****  *				: -2 = Bogus CAN id rejected
+ 247:Ourwares/can_iface.c ****  ******************************************************************************/
+ 248:Ourwares/can_iface.c **** 
+ 249:Ourwares/can_iface.c **** extern uint32_t debugTX1c;
+ 250:Ourwares/can_iface.c **** 
+ 251:Ourwares/can_iface.c **** int can_driver_put(struct CAN_CTLBLOCK* pctl,struct CANRCVBUF *pcan,uint8_t maxretryct,uint8_t bits
+ 252:Ourwares/can_iface.c **** {
+ 253:Ourwares/can_iface.c **** 	volatile struct CAN_POOLBLOCK* pnew;
+ 254:Ourwares/can_iface.c **** 	volatile struct CAN_POOLBLOCK* pfor; 	// Loop pointer for the 'for’ loop.
+ 255:Ourwares/can_iface.c **** 
+ 256:Ourwares/can_iface.c **** 	/* Reject CAN msg if CAN id is "bogus". */
+ 257:Ourwares/can_iface.c **** 	// If 11b is specified && bits in extended address are present it is bogus
+ 258:Ourwares/can_iface.c **** 	if (((pcan->id & CAN_ID_EXT) == 0) && ((pcan->id & CAN_EXTENDED_MASK) != 0))
+ 259:Ourwares/can_iface.c **** 	{
+ 260:Ourwares/can_iface.c **** 		pctl->bogusct += 1;
+ 261:Ourwares/can_iface.c **** 		return -2;
+ 262:Ourwares/can_iface.c **** 	}
+ 263:Ourwares/can_iface.c **** 
+ 264:Ourwares/can_iface.c **** 	/* Get a free block from the free list. */
+ 265:Ourwares/can_iface.c **** //	disable_TXints(pctl, save);	// TX interrupt might move a msg to the free list.
+ 266:Ourwares/can_iface.c **** 	taskENTER_CRITICAL();
+ 267:Ourwares/can_iface.c **** 
+ 268:Ourwares/can_iface.c **** 	pnew = pctl->frii.plinknext;
+ 269:Ourwares/can_iface.c **** 	if (pnew == NULL)
+ 270:Ourwares/can_iface.c **** 	{ // Here, either no free list blocks OR this TX reached its limit
+ 271:Ourwares/can_iface.c **** //		reenable_TXints(save);
+ 272:Ourwares/can_iface.c **** 		taskEXIT_CRITICAL();
+ 273:Ourwares/can_iface.c **** 		pctl->can_errors.can_msgovrflow += 1;	// Count overflows
+ 274:Ourwares/can_iface.c **** 		return -1;	// Return failure: no space & screwed
+ 275:Ourwares/can_iface.c **** 	}	
+ 276:Ourwares/can_iface.c **** 	pctl->frii.plinknext = pnew->plinknext;
+ 277:Ourwares/can_iface.c **** 
+ 278:Ourwares/can_iface.c **** //	reenable_TXints(save);
+ 279:Ourwares/can_iface.c **** 
+ 280:Ourwares/can_iface.c **** 	/* 'pnew' now points to the block that is free (and not linked). */
+ 281:Ourwares/can_iface.c **** 
+ 282:Ourwares/can_iface.c **** 	/* Build struct/block for addition to the pending list. */
+ 283:Ourwares/can_iface.c **** 	// retryct    xb[0]	// Counter for number of retries for TERR errors
+ 284:Ourwares/can_iface.c **** 	// maxretryct xb[1]	// Maximum number of TERR retry counts
+ 285:Ourwares/can_iface.c **** 	// bits	      xb[2]		// Use these bits to set some conditions (see below)
+ 286:Ourwares/can_iface.c **** 	// nosend     xb[3]	// Do not send: 0 = send; 1 = do NOT send on CAN bus (internal use only)
+ 287:Ourwares/can_iface.c **** 	pnew->can     = *pcan;	// Copy CAN msg.
+ 288:Ourwares/can_iface.c **** 	pnew->x.xb[1] = maxretryct;	// Maximum number of TERR retry counts
+ 289:Ourwares/can_iface.c **** 	pnew->x.xb[2] = bits;	// Use these bits to set some conditions (see .h file)
+ 290:Ourwares/can_iface.c **** 	pnew->x.xb[3] = 0;	// not used for now
+ 291:Ourwares/can_iface.c **** 	pnew->x.xb[0] = 0;	// Retry counter for TERRs
+ 292:Ourwares/can_iface.c **** 
+ 293:Ourwares/can_iface.c **** 	/* Find location to insert new msg.  Lower value CAN ids are higher priority, 
+ 294:Ourwares/can_iface.c ****            and when the CAN id msg to be inserted has the same CAN id as the 'pfor' one
+ 295:Ourwares/can_iface.c ****            already in the list, then place the new one further down so that msgs with 
+ 296:Ourwares/can_iface.c ****            the same CAN id do not get their order of transmission altered. */
+ 297:Ourwares/can_iface.c **** //	disable_TXints(pctl, save);
+ 298:Ourwares/can_iface.c **** 
+ 299:Ourwares/can_iface.c **** 	for (pfor = &pctl->pend; pfor->plinknext != NULL; pfor = pfor->plinknext)
+ 300:Ourwares/can_iface.c **** 	{
+ 301:Ourwares/can_iface.c **** 		if (pnew->can.id < (pfor->plinknext)->can.id) // Pay attention: "value" vs "priority"
+ARM GAS  /tmp/ccorA0ob.s 			page 8
+
+
+ 302:Ourwares/can_iface.c **** 			break;
+ 303:Ourwares/can_iface.c **** 	}
+ 304:Ourwares/can_iface.c **** 
+ 305:Ourwares/can_iface.c **** 	/* Add new msg to pending list. (TX interrupt is still disabled) */
+ 306:Ourwares/can_iface.c **** 	pnew->plinknext = pfor->plinknext; 	// Insert new msg into 
+ 307:Ourwares/can_iface.c **** 	pfor->plinknext = pnew;			//   pending list.
+ 308:Ourwares/can_iface.c **** 
+ 309:Ourwares/can_iface.c **** 	if (pctl->pxprv == NULL) // Is sending complete?
+ 310:Ourwares/can_iface.c **** 	{ // pxprv == NULL means CAN mailbox did not get loaded, so CAN is idle.
+ 311:Ourwares/can_iface.c **** 		loadmbx2(pctl); // Start sending
+ 312:Ourwares/can_iface.c **** 	}
+ 313:Ourwares/can_iface.c **** 	else
+ 314:Ourwares/can_iface.c **** 	{ // CAN sending is in progress.
+ 315:Ourwares/can_iface.c **** 		if ((pctl->pxprv)->plinknext == pnew) // Does pxprv need adjustment?
+ 316:Ourwares/can_iface.c **** 		{ // Here yes. We inserted a msg between 'pxprv' and 'pxprv->linknext'
+ 317:Ourwares/can_iface.c **** 			pctl->pxprv = pnew;	// Update 'pxprv' so that it still points to msg TX using.
+ 318:Ourwares/can_iface.c **** 			pctl->can_errors.can_pxprv_fwd_one += 1;	// Count: Instances that pxprv was adjusted in 'for' lo
+ 319:Ourwares/can_iface.c **** 		}
+ 320:Ourwares/can_iface.c **** 		/* Check if new msg is higher CAN priority than msg in mailbox */
+ 321:Ourwares/can_iface.c **** #ifdef CHEATINGONHAL
+ 322:Ourwares/can_iface.c **** 		if ( (pctl->pend.plinknext)->can.id < (pctl->phcan->Instance->sTxMailBox[0] & ~0x1)  )
+ 323:Ourwares/can_iface.c **** #else
+ 324:Ourwares/can_iface.c **** 		if ( (pctl->pend.plinknext)->can.id < (pctl->mbx0 & ~0x1)  ) // Use mailbox shadow id
+ 325:Ourwares/can_iface.c **** #endif
+ 326:Ourwares/can_iface.c **** 		{ // Here, new msg has higher CAN priority than msg in mailbox
+ 327:Ourwares/can_iface.c **** 
+ 328:Ourwares/can_iface.c **** /* CAN transmit status register (CAN_TSR) ref manual --
+ 329:Ourwares/can_iface.c **** Set by software to abort the transmission request for the corresponding mailbox.
+ 330:Ourwares/can_iface.c **** Cleared by hardware when the mailbox becomes empty.
+ 331:Ourwares/can_iface.c **** Setting this bit has no effect when the mailbox is not pending for transmission. 
+ 332:Ourwares/can_iface.c **** */
+ 333:Ourwares/can_iface.c **** 			pctl->abortflag = 1;	// Set flag for interrupt routine use
+ 334:Ourwares/can_iface.c **** //			CAN_TSR(pctl->vcan) |= CAN_TSR_ABRQ0;	// Set Abort request for mailbox 0.
+ 335:Ourwares/can_iface.c **** 			HAL_CAN_AbortTxRequest(pctl->phcan, CAN_TX_MAILBOX0);
+ 336:Ourwares/can_iface.c **** 		}
+ 337:Ourwares/can_iface.c **** 	}
+ 338:Ourwares/can_iface.c **** //	reenable_TXints(save);
+ 339:Ourwares/can_iface.c **** 	taskEXIT_CRITICAL();
+ 340:Ourwares/can_iface.c **** 
+ 341:Ourwares/can_iface.c **** 	return 0;	// Success!
+ 342:Ourwares/can_iface.c **** }
+ 343:Ourwares/can_iface.c **** /*---------------------------------------------------------------------------------------------
+ 344:Ourwares/can_iface.c ****  * static void loadmbx2(struct CAN_CTLBLOCK* pctl)
+ 345:Ourwares/can_iface.c ****  * @brief	: Load mailbox
+ 346:Ourwares/can_iface.c ****  ----------------------------------------------------------------------------------------------*/
+ 347:Ourwares/can_iface.c **** static void loadmbx2(struct CAN_CTLBLOCK* pctl)
+ 348:Ourwares/can_iface.c **** {
+ 349:Ourwares/can_iface.c **** 	uint32_t uidata[2];
+ 350:Ourwares/can_iface.c **** 	uint32_t TxMailbox;
+ 351:Ourwares/can_iface.c **** 	CAN_TxHeaderTypeDef halmsg;
+ 352:Ourwares/can_iface.c **** 
+ 353:Ourwares/can_iface.c **** 	volatile struct CAN_POOLBLOCK* p = pctl->pend.plinknext;
+ 354:Ourwares/can_iface.c **** 
+ 355:Ourwares/can_iface.c **** 	if (p == NULL)
+ 356:Ourwares/can_iface.c **** 	{
+ 357:Ourwares/can_iface.c **** 		pctl->pxprv = NULL;
+ 358:Ourwares/can_iface.c **** 		return; // Return if no more to send
+ARM GAS  /tmp/ccorA0ob.s 			page 9
+
+
+ 359:Ourwares/can_iface.c **** 	}
+ 360:Ourwares/can_iface.c **** 
+ 361:Ourwares/can_iface.c **** 	pctl->pxprv = &pctl->pend;	// Save in a static var
+ 362:Ourwares/can_iface.c **** 
+ 363:Ourwares/can_iface.c **** #ifdef CHEATINGONHAL
+ 364:Ourwares/can_iface.c **** 	/* Load the mailbox with the message.  CAN ID low bit starts xmission. */
+ 365:Ourwares/can_iface.c **** 	pctl->phcan->sTxMailBox[0].TDTR = p->can.dlc;	 	// CAN_TDT0R:  mailbox 0 time & length
+ 366:Ourwares/can_iface.c **** 	pctl->phcan->sTxMailBox[0].TDLR = p->can.cd.ui[0];	// CAN_TDL0RL: mailbox 0 data low  register
+ 367:Ourwares/can_iface.c **** 	pctl->phcan->sTxMailBox[0].TDHR = p->can.cd.ui[1];	// CAN_TDL0RH: mailbox 0 data low  register
+ 368:Ourwares/can_iface.c **** 	/* Load CAN ID with TX Request bit set */
+ 369:Ourwares/can_iface.c **** 	pctl->phcan->sTxMailBox[0].TIR = (p->can.id | 0x1); 	// CAN_TI0R:   mailbox 0 identifier register
+ 370:Ourwares/can_iface.c **** #else
+ 371:Ourwares/can_iface.c **** 	/* Expand hardware friendly format to HAL format (which gets changed back to hardware friendly) */
+ 372:Ourwares/can_iface.c **** 	halmsg.StdId = (p->can.id >> 21);
+ 373:Ourwares/can_iface.c **** 	halmsg.ExtId = (p->can.id >>  3);
+ 374:Ourwares/can_iface.c **** 	halmsg.IDE   = (p->can.id & CAN_ID_EXT);
+ 375:Ourwares/can_iface.c **** 	halmsg.RTR   = (p->can.id & CAN_RTR_REMOTE);
+ 376:Ourwares/can_iface.c **** 	halmsg.DLC   = (p->can.dlc & 0xf);
+ 377:Ourwares/can_iface.c **** 	uidata[0]   = p->can.cd.ui[0];
+ 378:Ourwares/can_iface.c **** 	uidata[1]   = p->can.cd.ui[1];
+ 379:Ourwares/can_iface.c **** 	pctl->mbx0  = p->can.id;	// Shadow MBX0 ID
+ 380:Ourwares/can_iface.c ****    HAL_CAN_AddTxMessage(pctl->phcan, &halmsg, (uint8_t*)uidata, &TxMailbox);
+ 381:Ourwares/can_iface.c **** #endif
+ 382:Ourwares/can_iface.c **** 	return;
+ 383:Ourwares/can_iface.c **** }
+ 384:Ourwares/can_iface.c **** /* --------------------------------------------------------------------------------------
+ 385:Ourwares/can_iface.c **** * static void moveremove2(struct CAN_CTLBLOCK* pctl);
+ 386:Ourwares/can_iface.c **** * @brief	: Remove msg from pending list and add to free list
+ 387:Ourwares/can_iface.c ****   --------------------------------------------------------------------------------------- */
+ 388:Ourwares/can_iface.c **** static void moveremove2(struct CAN_CTLBLOCK* pctl)
+ 389:Ourwares/can_iface.c **** {
+ 102              		.loc 1 389 0
+ 103              		.cfi_startproc
+ 104              		@ args = 0, pretend = 0, frame = 0
+ 105              		@ frame_needed = 0, uses_anonymous_args = 0
+ 106              		@ link register save eliminated.
+ 107              	.LVL1:
+ 390:Ourwares/can_iface.c **** 	volatile struct CAN_POOLBLOCK* pmov;
+ 391:Ourwares/can_iface.c **** //	uint32_t save[2];
+ 392:Ourwares/can_iface.c **** 
+ 393:Ourwares/can_iface.c **** //	disable_TXints(pctl, save);	// TX or RX(other) interrupts might remove a msg from the free list.
+ 394:Ourwares/can_iface.c **** // Each CAN module has its own linked list and RX0,1 does not use the linked list, so disabling int
+ 395:Ourwares/can_iface.c **** 
+ 396:Ourwares/can_iface.c **** 	/* Remove from pending; move to free list. */
+ 397:Ourwares/can_iface.c **** 	pmov = pctl->pxprv->plinknext;	// Pts to removed item
+ 108              		.loc 1 397 0
+ 109 0000 036D     		ldr	r3, [r0, #80]
+ 110 0002 1B68     		ldr	r3, [r3]
+ 111              	.LVL2:
+ 398:Ourwares/can_iface.c **** 	pctl->pxprv->plinknext = pmov->plinknext;
+ 112              		.loc 1 398 0
+ 113 0004 026D     		ldr	r2, [r0, #80]
+ 114 0006 1968     		ldr	r1, [r3]
+ 115 0008 1160     		str	r1, [r2]
+ 399:Ourwares/can_iface.c **** 
+ 400:Ourwares/can_iface.c **** 	// Adding to free list
+ 401:Ourwares/can_iface.c **** 	pmov->plinknext = pctl->frii.plinknext; 
+ARM GAS  /tmp/ccorA0ob.s 			page 10
+
+
+ 116              		.loc 1 401 0
+ 117 000a 8268     		ldr	r2, [r0, #8]
+ 118 000c 1A60     		str	r2, [r3]
+ 402:Ourwares/can_iface.c **** 	pctl->frii.plinknext  = pmov;
+ 119              		.loc 1 402 0
+ 120 000e 8360     		str	r3, [r0, #8]
+ 121 0010 7047     		bx	lr
+ 122              		.cfi_endproc
+ 123              	.LFE136:
+ 125 0012 00BF     		.section	.text.loadmbx2,"ax",%progbits
+ 126              		.align	2
+ 127              		.thumb
+ 128              		.thumb_func
+ 130              	loadmbx2:
+ 131              	.LFB135:
+ 348:Ourwares/can_iface.c **** 	uint32_t uidata[2];
+ 132              		.loc 1 348 0
+ 133              		.cfi_startproc
+ 134              		@ args = 0, pretend = 0, frame = 40
+ 135              		@ frame_needed = 0, uses_anonymous_args = 0
+ 136              	.LVL3:
+ 353:Ourwares/can_iface.c **** 
+ 137              		.loc 1 353 0
+ 138 0000 036B     		ldr	r3, [r0, #48]
+ 139              	.LVL4:
+ 355:Ourwares/can_iface.c **** 	{
+ 140              		.loc 1 355 0
+ 141 0002 0BB9     		cbnz	r3, .L7
+ 357:Ourwares/can_iface.c **** 		return; // Return if no more to send
+ 142              		.loc 1 357 0
+ 143 0004 0365     		str	r3, [r0, #80]
+ 144 0006 7047     		bx	lr
+ 145              	.L7:
+ 348:Ourwares/can_iface.c **** 	uint32_t uidata[2];
+ 146              		.loc 1 348 0
+ 147 0008 00B5     		push	{lr}
+ 148              	.LCFI2:
+ 149              		.cfi_def_cfa_offset 4
+ 150              		.cfi_offset 14, -4
+ 151 000a 8BB0     		sub	sp, sp, #44
+ 152              	.LCFI3:
+ 153              		.cfi_def_cfa_offset 48
+ 361:Ourwares/can_iface.c **** 
+ 154              		.loc 1 361 0
+ 155 000c 00F13002 		add	r2, r0, #48
+ 156 0010 0265     		str	r2, [r0, #80]
+ 372:Ourwares/can_iface.c **** 	halmsg.ExtId = (p->can.id >>  3);
+ 157              		.loc 1 372 0
+ 158 0012 9A68     		ldr	r2, [r3, #8]
+ 159 0014 520D     		lsrs	r2, r2, #21
+ 160 0016 0192     		str	r2, [sp, #4]
+ 373:Ourwares/can_iface.c **** 	halmsg.IDE   = (p->can.id & CAN_ID_EXT);
+ 161              		.loc 1 373 0
+ 162 0018 9A68     		ldr	r2, [r3, #8]
+ 163 001a D208     		lsrs	r2, r2, #3
+ 164 001c 0292     		str	r2, [sp, #8]
+ 374:Ourwares/can_iface.c **** 	halmsg.RTR   = (p->can.id & CAN_RTR_REMOTE);
+ARM GAS  /tmp/ccorA0ob.s 			page 11
+
+
+ 165              		.loc 1 374 0
+ 166 001e 9A68     		ldr	r2, [r3, #8]
+ 167 0020 02F00402 		and	r2, r2, #4
+ 168 0024 0392     		str	r2, [sp, #12]
+ 375:Ourwares/can_iface.c **** 	halmsg.DLC   = (p->can.dlc & 0xf);
+ 169              		.loc 1 375 0
+ 170 0026 9A68     		ldr	r2, [r3, #8]
+ 171 0028 02F00202 		and	r2, r2, #2
+ 172 002c 0492     		str	r2, [sp, #16]
+ 376:Ourwares/can_iface.c **** 	uidata[0]   = p->can.cd.ui[0];
+ 173              		.loc 1 376 0
+ 174 002e DA68     		ldr	r2, [r3, #12]
+ 175 0030 02F00F02 		and	r2, r2, #15
+ 176 0034 0592     		str	r2, [sp, #20]
+ 377:Ourwares/can_iface.c **** 	uidata[1]   = p->can.cd.ui[1];
+ 177              		.loc 1 377 0
+ 178 0036 1A69     		ldr	r2, [r3, #16]
+ 179 0038 0892     		str	r2, [sp, #32]
+ 378:Ourwares/can_iface.c **** 	pctl->mbx0  = p->can.id;	// Shadow MBX0 ID
+ 180              		.loc 1 378 0
+ 181 003a 5A69     		ldr	r2, [r3, #20]
+ 182 003c 0992     		str	r2, [sp, #36]
+ 379:Ourwares/can_iface.c ****    HAL_CAN_AddTxMessage(pctl->phcan, &halmsg, (uint8_t*)uidata, &TxMailbox);
+ 183              		.loc 1 379 0
+ 184 003e 9B68     		ldr	r3, [r3, #8]
+ 185              	.LVL5:
+ 186 0040 8362     		str	r3, [r0, #40]
+ 380:Ourwares/can_iface.c **** #endif
+ 187              		.loc 1 380 0
+ 188 0042 07AB     		add	r3, sp, #28
+ 189 0044 08AA     		add	r2, sp, #32
+ 190 0046 01A9     		add	r1, sp, #4
+ 191 0048 0068     		ldr	r0, [r0]
+ 192              	.LVL6:
+ 193 004a FFF7FEFF 		bl	HAL_CAN_AddTxMessage
+ 194              	.LVL7:
+ 383:Ourwares/can_iface.c **** /* --------------------------------------------------------------------------------------
+ 195              		.loc 1 383 0
+ 196 004e 0BB0     		add	sp, sp, #44
+ 197              	.LCFI4:
+ 198              		.cfi_def_cfa_offset 4
+ 199              		@ sp needed
+ 200 0050 5DF804FB 		ldr	pc, [sp], #4
+ 201              		.cfi_endproc
+ 202              	.LFE135:
+ 204              		.section	.text.can_iface_add_take,"ax",%progbits
+ 205              		.align	2
+ 206              		.global	can_iface_add_take
+ 207              		.thumb
+ 208              		.thumb_func
+ 210              	can_iface_add_take:
+ 211              	.LFB130:
+  81:Ourwares/can_iface.c **** 	struct CANTAKEPTR* p;
+ 212              		.loc 1 81 0
+ 213              		.cfi_startproc
+ 214              		@ args = 0, pretend = 0, frame = 0
+ 215              		@ frame_needed = 0, uses_anonymous_args = 0
+ARM GAS  /tmp/ccorA0ob.s 			page 12
+
+
+ 216              	.LVL8:
+ 217 0000 38B5     		push	{r3, r4, r5, lr}
+ 218              	.LCFI5:
+ 219              		.cfi_def_cfa_offset 16
+ 220              		.cfi_offset 3, -16
+ 221              		.cfi_offset 4, -12
+ 222              		.cfi_offset 5, -8
+ 223              		.cfi_offset 14, -4
+ 224 0002 0546     		mov	r5, r0
+  84:Ourwares/can_iface.c **** 	/* Get one measily pointer */
+ 225              		.loc 1 84 0
+ 226 0004 FFF7FEFF 		bl	vPortEnterCritical
+ 227              	.LVL9:
+  86:Ourwares/can_iface.c **** 	if (p == NULL){ taskEXIT_CRITICAL();return NULL;}
+ 228              		.loc 1 86 0
+ 229 0008 0821     		movs	r1, #8
+ 230 000a 0120     		movs	r0, #1
+ 231 000c FFF7FEFF 		bl	calloc
+ 232              	.LVL10:
+  87:Ourwares/can_iface.c **** 
+ 233              		.loc 1 87 0
+ 234 0010 18B9     		cbnz	r0, .L11
+  87:Ourwares/can_iface.c **** 
+ 235              		.loc 1 87 0 is_stmt 0 discriminator 1
+ 236 0012 FFF7FEFF 		bl	vPortExitCritical
+ 237              	.LVL11:
+ 238 0016 0020     		movs	r0, #0
+ 239 0018 38BD     		pop	{r3, r4, r5, pc}
+ 240              	.LVL12:
+ 241              	.L11:
+ 242 001a 0446     		mov	r4, r0
+  92:Ourwares/can_iface.c **** 
+ 243              		.loc 1 92 0 is_stmt 1
+ 244 001c 05F15803 		add	r3, r5, #88
+ 245 0020 0360     		str	r3, [r0]
+  96:Ourwares/can_iface.c **** 
+ 246              		.loc 1 96 0
+ 247 0022 2B6E     		ldr	r3, [r5, #96]
+ 248 0024 4360     		str	r3, [r0, #4]
+  98:Ourwares/can_iface.c **** 	return p;
+ 249              		.loc 1 98 0
+ 250 0026 FFF7FEFF 		bl	vPortExitCritical
+ 251              	.LVL13:
+  99:Ourwares/can_iface.c **** }
+ 252              		.loc 1 99 0
+ 253 002a 2046     		mov	r0, r4
+ 100:Ourwares/can_iface.c **** /******************************************************************************
+ 254              		.loc 1 100 0
+ 255 002c 38BD     		pop	{r3, r4, r5, pc}
+ 256              		.cfi_endproc
+ 257              	.LFE130:
+ 259 002e 00BF     		.section	.text.can_iface_mbx_init,"ax",%progbits
+ 260              		.align	2
+ 261              		.global	can_iface_mbx_init
+ 262              		.thumb
+ 263              		.thumb_func
+ 265              	can_iface_mbx_init:
+ARM GAS  /tmp/ccorA0ob.s 			page 13
+
+
+ 266              	.LFB131:
+ 109:Ourwares/can_iface.c **** 	if (tskhandle == NULL)
+ 267              		.loc 1 109 0
+ 268              		.cfi_startproc
+ 269              		@ args = 0, pretend = 0, frame = 0
+ 270              		@ frame_needed = 0, uses_anonymous_args = 0
+ 271              	.LVL14:
+ 272 0000 38B5     		push	{r3, r4, r5, lr}
+ 273              	.LCFI6:
+ 274              		.cfi_def_cfa_offset 16
+ 275              		.cfi_offset 3, -16
+ 276              		.cfi_offset 4, -12
+ 277              		.cfi_offset 5, -8
+ 278              		.cfi_offset 14, -4
+ 279 0002 0446     		mov	r4, r0
+ 280 0004 1546     		mov	r5, r2
+ 110:Ourwares/can_iface.c **** 	{ // Here, use the current running Task
+ 281              		.loc 1 110 0
+ 282 0006 0846     		mov	r0, r1
+ 283              	.LVL15:
+ 284 0008 09B9     		cbnz	r1, .L15
+ 112:Ourwares/can_iface.c **** 	}
+ 285              		.loc 1 112 0
+ 286 000a FFF7FEFF 		bl	xTaskGetCurrentTaskHandle
+ 287              	.LVL16:
+ 288              	.L15:
+ 116:Ourwares/can_iface.c **** 	pctl->tsknote.notebit   = notebit;
+ 289              		.loc 1 116 0
+ 290 000e 6066     		str	r0, [r4, #100]
+ 117:Ourwares/can_iface.c **** 
+ 291              		.loc 1 117 0
+ 292 0010 A566     		str	r5, [r4, #104]
+ 122:Ourwares/can_iface.c **** }
+ 293              		.loc 1 122 0
+ 294 0012 2046     		mov	r0, r4
+ 295              	.LVL17:
+ 296 0014 FFF7FEFF 		bl	can_iface_add_take
+ 297              	.LVL18:
+ 123:Ourwares/can_iface.c **** /******************************************************************************
+ 298              		.loc 1 123 0
+ 299 0018 38BD     		pop	{r3, r4, r5, pc}
+ 300              		.cfi_endproc
+ 301              	.LFE131:
+ 303 001a 00BF     		.section	.text.can_iface_get_CANmsg,"ax",%progbits
+ 304              		.align	2
+ 305              		.global	can_iface_get_CANmsg
+ 306              		.thumb
+ 307              		.thumb_func
+ 309              	can_iface_get_CANmsg:
+ 310              	.LFB132:
+ 131:Ourwares/can_iface.c **** 	struct CANRCVBUFN* ptmp = NULL;
+ 311              		.loc 1 131 0
+ 312              		.cfi_startproc
+ 313              		@ args = 0, pretend = 0, frame = 0
+ 314              		@ frame_needed = 0, uses_anonymous_args = 0
+ 315              		@ link register save eliminated.
+ 316              	.LVL19:
+ARM GAS  /tmp/ccorA0ob.s 			page 14
+
+
+ 317 0000 0346     		mov	r3, r0
+ 318              	.LVL20:
+ 133:Ourwares/can_iface.c **** 
+ 319              		.loc 1 133 0
+ 320 0002 0268     		ldr	r2, [r0]
+ 321 0004 9168     		ldr	r1, [r2, #8]
+ 322 0006 4068     		ldr	r0, [r0, #4]
+ 323              	.LVL21:
+ 324 0008 8142     		cmp	r1, r0
+ 325 000a 09D0     		beq	.L19
+ 131:Ourwares/can_iface.c **** 	struct CANRCVBUFN* ptmp = NULL;
+ 326              		.loc 1 131 0
+ 327 000c 10B4     		push	{r4}
+ 328              	.LCFI7:
+ 329              		.cfi_def_cfa_offset 4
+ 330              		.cfi_offset 4, -4
+ 331              	.LVL22:
+ 136:Ourwares/can_iface.c **** 	if (p->ptake == p->pcir->pend) p->ptake = p->pcir->pbegin;
+ 332              		.loc 1 136 0
+ 333 000e 00F11801 		add	r1, r0, #24
+ 334 0012 5960     		str	r1, [r3, #4]
+ 137:Ourwares/can_iface.c **** 
+ 335              		.loc 1 137 0
+ 336 0014 5468     		ldr	r4, [r2, #4]
+ 337 0016 A142     		cmp	r1, r4
+ 338 0018 04D1     		bne	.L18
+ 137:Ourwares/can_iface.c **** 
+ 339              		.loc 1 137 0 is_stmt 0 discriminator 1
+ 340 001a 1268     		ldr	r2, [r2]
+ 341 001c 5A60     		str	r2, [r3, #4]
+ 342 001e 01E0     		b	.L18
+ 343              	.LVL23:
+ 344              	.L19:
+ 345              	.LCFI8:
+ 346              		.cfi_def_cfa_offset 0
+ 347              		.cfi_restore 4
+ 133:Ourwares/can_iface.c **** 
+ 348              		.loc 1 133 0 is_stmt 1
+ 349 0020 0020     		movs	r0, #0
+ 350 0022 7047     		bx	lr
+ 351              	.LVL24:
+ 352              	.L18:
+ 353              	.LCFI9:
+ 354              		.cfi_def_cfa_offset 4
+ 355              		.cfi_offset 4, -4
+ 140:Ourwares/can_iface.c **** /******************************************************************************
+ 356              		.loc 1 140 0
+ 357 0024 5DF8044B 		ldr	r4, [sp], #4
+ 358              	.LCFI10:
+ 359              		.cfi_restore 4
+ 360              		.cfi_def_cfa_offset 0
+ 361 0028 7047     		bx	lr
+ 362              		.cfi_endproc
+ 363              	.LFE132:
+ 365 002a 00BF     		.section	.text.can_iface_init,"ax",%progbits
+ 366              		.align	2
+ 367              		.global	can_iface_init
+ARM GAS  /tmp/ccorA0ob.s 			page 15
+
+
+ 368              		.thumb
+ 369              		.thumb_func
+ 371              	can_iface_init:
+ 372              	.LFB133:
+ 159:Ourwares/can_iface.c **** 	int i;
+ 373              		.loc 1 159 0
+ 374              		.cfi_startproc
+ 375              		@ args = 0, pretend = 0, frame = 0
+ 376              		@ frame_needed = 0, uses_anonymous_args = 0
+ 377              	.LVL25:
+ 378 0000 2DE9F041 		push	{r4, r5, r6, r7, r8, lr}
+ 379              	.LCFI11:
+ 380              		.cfi_def_cfa_offset 24
+ 381              		.cfi_offset 4, -24
+ 382              		.cfi_offset 5, -20
+ 383              		.cfi_offset 6, -16
+ 384              		.cfi_offset 7, -12
+ 385              		.cfi_offset 8, -8
+ 386              		.cfi_offset 14, -4
+ 387 0004 0446     		mov	r4, r0
+ 388 0006 8846     		mov	r8, r1
+ 389 0008 1646     		mov	r6, r2
+ 390 000a 1F46     		mov	r7, r3
+ 170:Ourwares/can_iface.c **** 	/* Get a control block for this CAN module. */
+ 391              		.loc 1 170 0
+ 392 000c FFF7FEFF 		bl	vPortEnterCritical
+ 393              	.LVL26:
+ 172:Ourwares/can_iface.c **** 	if (pctl == NULL){ taskEXIT_CRITICAL();return NULL;}
+ 394              		.loc 1 172 0
+ 395 0010 B821     		movs	r1, #184
+ 396 0012 0120     		movs	r0, #1
+ 397 0014 FFF7FEFF 		bl	calloc
+ 398              	.LVL27:
+ 173:Ourwares/can_iface.c **** 
+ 399              		.loc 1 173 0
+ 400 0018 20B9     		cbnz	r0, .L23
+ 173:Ourwares/can_iface.c **** 
+ 401              		.loc 1 173 0 is_stmt 0 discriminator 1
+ 402 001a FFF7FEFF 		bl	vPortExitCritical
+ 403              	.LVL28:
+ 404 001e 0020     		movs	r0, #0
+ 405 0020 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 406              	.LVL29:
+ 407              	.L23:
+ 408 0024 0546     		mov	r5, r0
+ 176:Ourwares/can_iface.c **** 
+ 409              		.loc 1 176 0 is_stmt 1
+ 410 0026 0460     		str	r4, [r0]
+ 179:Ourwares/can_iface.c **** 
+ 411              		.loc 1 179 0
+ 412 0028 80F8B180 		strb	r8, [r0, #177]
+ 182:Ourwares/can_iface.c **** 	{ // Yes. Check for duplicates, i.e. check for bozo programmers
+ 413              		.loc 1 182 0
+ 414 002c 304B     		ldr	r3, .L40
+ 415 002e 1968     		ldr	r1, [r3]
+ 416 0030 59B9     		cbnz	r1, .L37
+ 417 0032 0EE0     		b	.L38
+ARM GAS  /tmp/ccorA0ob.s 			page 16
+
+
+ 418              	.LVL30:
+ 419              	.L28:
+ 187:Ourwares/can_iface.c **** 			{
+ 420              		.loc 1 187 0
+ 421 0034 1A68     		ldr	r2, [r3]
+ 422 0036 1268     		ldr	r2, [r2]
+ 423 0038 9442     		cmp	r4, r2
+ 424 003a 04D1     		bne	.L27
+ 189:Ourwares/can_iface.c **** 				return NULL; // Duplicate
+ 425              		.loc 1 189 0
+ 426 003c FFF7FEFF 		bl	vPortExitCritical
+ 427              	.LVL31:
+ 190:Ourwares/can_iface.c **** 			}
+ 428              		.loc 1 190 0
+ 429 0040 0020     		movs	r0, #0
+ 430 0042 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 431              	.LVL32:
+ 432              	.L27:
+ 192:Ourwares/can_iface.c **** 		}
+ 433              		.loc 1 192 0
+ 434 0046 0433     		adds	r3, r3, #4
+ 435              	.LVL33:
+ 436 0048 00E0     		b	.L25
+ 437              	.LVL34:
+ 438              	.L37:
+ 439 004a 2A4B     		ldr	r3, .L40+4
+ 440              	.L25:
+ 441              	.LVL35:
+ 185:Ourwares/can_iface.c **** 		{
+ 442              		.loc 1 185 0
+ 443 004c 8B42     		cmp	r3, r1
+ 444 004e F1D1     		bne	.L28
+ 445 0050 02E0     		b	.L29
+ 446              	.LVL36:
+ 447              	.L38:
+ 197:Ourwares/can_iface.c **** 	}
+ 448              		.loc 1 197 0
+ 449 0052 284A     		ldr	r2, .L40+4
+ 450 0054 264B     		ldr	r3, .L40
+ 451 0056 1A60     		str	r2, [r3]
+ 452              	.L29:
+ 200:Ourwares/can_iface.c **** 	ppctllist++;
+ 453              		.loc 1 200 0
+ 454 0058 254A     		ldr	r2, .L40
+ 455 005a 1368     		ldr	r3, [r2]
+ 456 005c 43F8045B 		str	r5, [r3], #4
+ 201:Ourwares/can_iface.c **** 	if (ppctllist == &pctllist[MAXCANMODULES]) { taskEXIT_CRITICAL();return NULL;} //JIC too many entr
+ 457              		.loc 1 201 0
+ 458 0060 1360     		str	r3, [r2]
+ 202:Ourwares/can_iface.c **** 	
+ 459              		.loc 1 202 0
+ 460 0062 254A     		ldr	r2, .L40+8
+ 461 0064 9342     		cmp	r3, r2
+ 462 0066 04D1     		bne	.L30
+ 202:Ourwares/can_iface.c **** 	
+ 463              		.loc 1 202 0 is_stmt 0 discriminator 1
+ 464 0068 FFF7FEFF 		bl	vPortExitCritical
+ARM GAS  /tmp/ccorA0ob.s 			page 17
+
+
+ 465              	.LVL37:
+ 466 006c 0020     		movs	r0, #0
+ 467 006e BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 468              	.LVL38:
+ 469              	.L30:
+ 208:Ourwares/can_iface.c **** 	ptmp = (struct CAN_POOLBLOCK*)calloc(numtx, sizeof(struct CAN_POOLBLOCK));
+ 470              		.loc 1 208 0 is_stmt 1
+ 471 0072 2EB9     		cbnz	r6, .L31
+ 208:Ourwares/can_iface.c **** 	ptmp = (struct CAN_POOLBLOCK*)calloc(numtx, sizeof(struct CAN_POOLBLOCK));
+ 472              		.loc 1 208 0 is_stmt 0 discriminator 1
+ 473 0074 FF23     		movs	r3, #255
+ 474 0076 85F8B030 		strb	r3, [r5, #176]
+ 475 007a 2846     		mov	r0, r5
+ 476              	.LVL39:
+ 477 007c BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 478              	.LVL40:
+ 479              	.L31:
+ 209:Ourwares/can_iface.c **** 	if (ptmp == NULL){pctl->ret = -2; taskEXIT_CRITICAL(); return NULL;} // Get buff failed
+ 480              		.loc 1 209 0 is_stmt 1
+ 481 0080 2021     		movs	r1, #32
+ 482 0082 3046     		mov	r0, r6
+ 483              	.LVL41:
+ 484 0084 FFF7FEFF 		bl	calloc
+ 485              	.LVL42:
+ 210:Ourwares/can_iface.c **** 
+ 486              		.loc 1 210 0
+ 487 0088 0346     		mov	r3, r0
+ 488 008a 38B9     		cbnz	r0, .L32
+ 210:Ourwares/can_iface.c **** 
+ 489              		.loc 1 210 0 is_stmt 0 discriminator 1
+ 490 008c FE23     		movs	r3, #254
+ 491 008e 85F8B030 		strb	r3, [r5, #176]
+ 492 0092 FFF7FEFF 		bl	vPortExitCritical
+ 493              	.LVL43:
+ 494 0096 0020     		movs	r0, #0
+ 495 0098 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 496              	.LVL44:
+ 497              	.L32:
+ 214:Ourwares/can_iface.c **** 	for (i = 0; i < numtx; i++)
+ 498              		.loc 1 214 0 is_stmt 1
+ 499 009c 05F10801 		add	r1, r5, #8
+ 500              	.LVL45:
+ 215:Ourwares/can_iface.c **** 	{
+ 501              		.loc 1 215 0
+ 502 00a0 0022     		movs	r2, #0
+ 503 00a2 03E0     		b	.L33
+ 504              	.LVL46:
+ 505              	.L34:
+ 217:Ourwares/can_iface.c **** 		plst = ptmp++;
+ 506              		.loc 1 217 0 discriminator 3
+ 507 00a4 0B60     		str	r3, [r1]
+ 508              	.LVL47:
+ 215:Ourwares/can_iface.c **** 	{
+ 509              		.loc 1 215 0 discriminator 3
+ 510 00a6 0132     		adds	r2, r2, #1
+ 511              	.LVL48:
+ 218:Ourwares/can_iface.c **** 	}
+ARM GAS  /tmp/ccorA0ob.s 			page 18
+
+
+ 512              		.loc 1 218 0 discriminator 3
+ 513 00a8 1946     		mov	r1, r3
+ 514              	.LVL49:
+ 515 00aa 2033     		adds	r3, r3, #32
+ 516              	.LVL50:
+ 517              	.L33:
+ 215:Ourwares/can_iface.c **** 	{
+ 518              		.loc 1 215 0 discriminator 1
+ 519 00ac B242     		cmp	r2, r6
+ 520 00ae F9DB     		blt	.L34
+ 222:Ourwares/can_iface.c **** 	pcann = (struct CANRCVBUFN*)calloc(numrx, sizeof(struct CANRCVBUFN));
+ 521              		.loc 1 222 0
+ 522 00b0 2FB9     		cbnz	r7, .L35
+ 222:Ourwares/can_iface.c **** 	pcann = (struct CANRCVBUFN*)calloc(numrx, sizeof(struct CANRCVBUFN));
+ 523              		.loc 1 222 0 is_stmt 0 discriminator 1
+ 524 00b2 FD23     		movs	r3, #253
+ 525              	.LVL51:
+ 526 00b4 85F8B030 		strb	r3, [r5, #176]
+ 527 00b8 2846     		mov	r0, r5
+ 528 00ba BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 529              	.LVL52:
+ 530              	.L35:
+ 223:Ourwares/can_iface.c **** 	if (pcann == NULL){pctl->ret = -4; taskEXIT_CRITICAL(); return NULL;} // Get buff failed
+ 531              		.loc 1 223 0 is_stmt 1
+ 532 00be 1821     		movs	r1, #24
+ 533              	.LVL53:
+ 534 00c0 3846     		mov	r0, r7
+ 535 00c2 FFF7FEFF 		bl	calloc
+ 536              	.LVL54:
+ 224:Ourwares/can_iface.c **** 
+ 537              		.loc 1 224 0
+ 538 00c6 38B9     		cbnz	r0, .L36
+ 224:Ourwares/can_iface.c **** 
+ 539              		.loc 1 224 0 is_stmt 0 discriminator 1
+ 540 00c8 FC23     		movs	r3, #252
+ 541 00ca 85F8B030 		strb	r3, [r5, #176]
+ 542 00ce FFF7FEFF 		bl	vPortExitCritical
+ 543              	.LVL55:
+ 544 00d2 0020     		movs	r0, #0
+ 545 00d4 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 546              	.LVL56:
+ 547              	.L36:
+ 227:Ourwares/can_iface.c **** 	pctl->cirptrs.pwork  = pcann;
+ 548              		.loc 1 227 0 is_stmt 1
+ 549 00d8 A865     		str	r0, [r5, #88]
+ 228:Ourwares/can_iface.c **** 	pctl->cirptrs.pend   = pcann + numrx;
+ 550              		.loc 1 228 0
+ 551 00da 2866     		str	r0, [r5, #96]
+ 229:Ourwares/can_iface.c **** 
+ 552              		.loc 1 229 0
+ 553 00dc 07EB4707 		add	r7, r7, r7, lsl #1
+ 554 00e0 FB00     		lsls	r3, r7, #3
+ 555 00e2 0344     		add	r3, r3, r0
+ 556 00e4 EB65     		str	r3, [r5, #92]
+ 234:Ourwares/can_iface.c **** 	return pctl;	// Return pointer to control block
+ 557              		.loc 1 234 0
+ 558 00e6 FFF7FEFF 		bl	vPortExitCritical
+ARM GAS  /tmp/ccorA0ob.s 			page 19
+
+
+ 559              	.LVL57:
+ 235:Ourwares/can_iface.c **** }
+ 560              		.loc 1 235 0
+ 561 00ea 2846     		mov	r0, r5
+ 236:Ourwares/can_iface.c **** /******************************************************************************
+ 562              		.loc 1 236 0
+ 563 00ec BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 564              	.LVL58:
+ 565              	.L41:
+ 566              		.align	2
+ 567              	.L40:
+ 568 00f0 00000000 		.word	.LANCHOR1
+ 569 00f4 00000000 		.word	.LANCHOR0
+ 570 00f8 10000000 		.word	.LANCHOR0+16
+ 571              		.cfi_endproc
+ 572              	.LFE133:
+ 574              		.section	.text.can_driver_put,"ax",%progbits
+ 575              		.align	2
+ 576              		.global	can_driver_put
+ 577              		.thumb
+ 578              		.thumb_func
+ 580              	can_driver_put:
+ 581              	.LFB134:
+ 252:Ourwares/can_iface.c **** 	volatile struct CAN_POOLBLOCK* pnew;
+ 582              		.loc 1 252 0
+ 583              		.cfi_startproc
+ 584              		@ args = 0, pretend = 0, frame = 0
+ 585              		@ frame_needed = 0, uses_anonymous_args = 0
+ 586              	.LVL59:
+ 587 0000 2DE9F843 		push	{r3, r4, r5, r6, r7, r8, r9, lr}
+ 588              	.LCFI12:
+ 589              		.cfi_def_cfa_offset 32
+ 590              		.cfi_offset 3, -32
+ 591              		.cfi_offset 4, -28
+ 592              		.cfi_offset 5, -24
+ 593              		.cfi_offset 6, -20
+ 594              		.cfi_offset 7, -16
+ 595              		.cfi_offset 8, -12
+ 596              		.cfi_offset 9, -8
+ 597              		.cfi_offset 14, -4
+ 258:Ourwares/can_iface.c **** 	{
+ 598              		.loc 1 258 0
+ 599 0004 0E68     		ldr	r6, [r1]
+ 600 0006 16F0040F 		tst	r6, #4
+ 601 000a 0BD1     		bne	.L43
+ 258:Ourwares/can_iface.c **** 	{
+ 602              		.loc 1 258 0 is_stmt 0 discriminator 1
+ 603 000c 2D4C     		ldr	r4, .L53
+ 604 000e 3440     		ands	r4, r4, r6
+ 605 0010 44B1     		cbz	r4, .L43
+ 260:Ourwares/can_iface.c **** 		return -2;
+ 606              		.loc 1 260 0 is_stmt 1
+ 607 0012 D0F8AC30 		ldr	r3, [r0, #172]
+ 608              	.LVL60:
+ 609 0016 0133     		adds	r3, r3, #1
+ 610 0018 C0F8AC30 		str	r3, [r0, #172]
+ 261:Ourwares/can_iface.c **** 	}
+ARM GAS  /tmp/ccorA0ob.s 			page 20
+
+
+ 611              		.loc 1 261 0
+ 612 001c 6FF00100 		mvn	r0, #1
+ 613              	.LVL61:
+ 614 0020 BDE8F883 		pop	{r3, r4, r5, r6, r7, r8, r9, pc}
+ 615              	.LVL62:
+ 616              	.L43:
+ 617 0024 9846     		mov	r8, r3
+ 618 0026 9146     		mov	r9, r2
+ 619 0028 0E46     		mov	r6, r1
+ 620 002a 0546     		mov	r5, r0
+ 266:Ourwares/can_iface.c **** 
+ 621              		.loc 1 266 0
+ 622 002c FFF7FEFF 		bl	vPortEnterCritical
+ 623              	.LVL63:
+ 268:Ourwares/can_iface.c **** 	if (pnew == NULL)
+ 624              		.loc 1 268 0
+ 625 0030 AC68     		ldr	r4, [r5, #8]
+ 626              	.LVL64:
+ 269:Ourwares/can_iface.c **** 	{ // Here, either no free list blocks OR this TX reached its limit
+ 627              		.loc 1 269 0
+ 628 0032 44B9     		cbnz	r4, .L45
+ 272:Ourwares/can_iface.c **** 		pctl->can_errors.can_msgovrflow += 1;	// Count overflows
+ 629              		.loc 1 272 0
+ 630 0034 FFF7FEFF 		bl	vPortExitCritical
+ 631              	.LVL65:
+ 273:Ourwares/can_iface.c **** 		return -1;	// Return failure: no space & screwed
+ 632              		.loc 1 273 0
+ 633 0038 EB6F     		ldr	r3, [r5, #124]
+ 634 003a 0133     		adds	r3, r3, #1
+ 635 003c EB67     		str	r3, [r5, #124]
+ 274:Ourwares/can_iface.c **** 	}	
+ 636              		.loc 1 274 0
+ 637 003e 4FF0FF30 		mov	r0, #-1
+ 638 0042 BDE8F883 		pop	{r3, r4, r5, r6, r7, r8, r9, pc}
+ 639              	.LVL66:
+ 640              	.L45:
+ 276:Ourwares/can_iface.c **** 
+ 641              		.loc 1 276 0
+ 642 0046 2746     		mov	r7, r4
+ 643 0048 57F8083B 		ldr	r3, [r7], #8
+ 644 004c AB60     		str	r3, [r5, #8]
+ 287:Ourwares/can_iface.c **** 	pnew->x.xb[1] = maxretryct;	// Maximum number of TERR retry counts
+ 645              		.loc 1 287 0
+ 646 004e 96E80F00 		ldmia	r6, {r0, r1, r2, r3}
+ 647 0052 87E80F00 		stmia	r7, {r0, r1, r2, r3}
+ 288:Ourwares/can_iface.c **** 	pnew->x.xb[2] = bits;	// Use these bits to set some conditions (see .h file)
+ 648              		.loc 1 288 0
+ 649 0056 84F81990 		strb	r9, [r4, #25]
+ 289:Ourwares/can_iface.c **** 	pnew->x.xb[3] = 0;	// not used for now
+ 650              		.loc 1 289 0
+ 651 005a 84F81A80 		strb	r8, [r4, #26]
+ 290:Ourwares/can_iface.c **** 	pnew->x.xb[0] = 0;	// Retry counter for TERRs
+ 652              		.loc 1 290 0
+ 653 005e 0023     		movs	r3, #0
+ 654 0060 E376     		strb	r3, [r4, #27]
+ 291:Ourwares/can_iface.c **** 
+ 655              		.loc 1 291 0
+ARM GAS  /tmp/ccorA0ob.s 			page 21
+
+
+ 656 0062 2376     		strb	r3, [r4, #24]
+ 299:Ourwares/can_iface.c **** 	{
+ 657              		.loc 1 299 0
+ 658 0064 05F13003 		add	r3, r5, #48
+ 659              	.LVL67:
+ 660 0068 05E0     		b	.L46
+ 661              	.L48:
+ 301:Ourwares/can_iface.c **** 			break;
+ 662              		.loc 1 301 0
+ 663 006a A168     		ldr	r1, [r4, #8]
+ 664 006c 1A68     		ldr	r2, [r3]
+ 665 006e 9268     		ldr	r2, [r2, #8]
+ 666 0070 9142     		cmp	r1, r2
+ 667 0072 03D3     		bcc	.L47
+ 299:Ourwares/can_iface.c **** 	{
+ 668              		.loc 1 299 0 discriminator 2
+ 669 0074 1B68     		ldr	r3, [r3]
+ 670              	.LVL68:
+ 671              	.L46:
+ 299:Ourwares/can_iface.c **** 	{
+ 672              		.loc 1 299 0 is_stmt 0 discriminator 1
+ 673 0076 1A68     		ldr	r2, [r3]
+ 674 0078 002A     		cmp	r2, #0
+ 675 007a F6D1     		bne	.L48
+ 676              	.L47:
+ 306:Ourwares/can_iface.c **** 	pfor->plinknext = pnew;			//   pending list.
+ 677              		.loc 1 306 0 is_stmt 1
+ 678 007c 1A68     		ldr	r2, [r3]
+ 679 007e 2260     		str	r2, [r4]
+ 307:Ourwares/can_iface.c **** 
+ 680              		.loc 1 307 0
+ 681 0080 1C60     		str	r4, [r3]
+ 309:Ourwares/can_iface.c **** 	{ // pxprv == NULL means CAN mailbox did not get loaded, so CAN is idle.
+ 682              		.loc 1 309 0
+ 683 0082 2B6D     		ldr	r3, [r5, #80]
+ 684              	.LVL69:
+ 685 0084 1BB9     		cbnz	r3, .L49
+ 311:Ourwares/can_iface.c **** 	}
+ 686              		.loc 1 311 0
+ 687 0086 2846     		mov	r0, r5
+ 688 0088 FFF7FEFF 		bl	loadmbx2
+ 689              	.LVL70:
+ 690 008c 15E0     		b	.L50
+ 691              	.L49:
+ 315:Ourwares/can_iface.c **** 		{ // Here yes. We inserted a msg between 'pxprv' and 'pxprv->linknext'
+ 692              		.loc 1 315 0
+ 693 008e 2B6D     		ldr	r3, [r5, #80]
+ 694 0090 1B68     		ldr	r3, [r3]
+ 695 0092 9C42     		cmp	r4, r3
+ 696 0094 05D1     		bne	.L51
+ 317:Ourwares/can_iface.c **** 			pctl->can_errors.can_pxprv_fwd_one += 1;	// Count: Instances that pxprv was adjusted in 'for' lo
+ 697              		.loc 1 317 0
+ 698 0096 2C65     		str	r4, [r5, #80]
+ 318:Ourwares/can_iface.c **** 		}
+ 699              		.loc 1 318 0
+ 700 0098 D5F88C30 		ldr	r3, [r5, #140]
+ 701 009c 0133     		adds	r3, r3, #1
+ARM GAS  /tmp/ccorA0ob.s 			page 22
+
+
+ 702 009e C5F88C30 		str	r3, [r5, #140]
+ 703              	.L51:
+ 324:Ourwares/can_iface.c **** #endif
+ 704              		.loc 1 324 0
+ 705 00a2 2B6B     		ldr	r3, [r5, #48]
+ 706 00a4 9A68     		ldr	r2, [r3, #8]
+ 707 00a6 AB6A     		ldr	r3, [r5, #40]
+ 708 00a8 23F00103 		bic	r3, r3, #1
+ 709 00ac 9A42     		cmp	r2, r3
+ 710 00ae 04D2     		bcs	.L50
+ 333:Ourwares/can_iface.c **** //			CAN_TSR(pctl->vcan) |= CAN_TSR_ABRQ0;	// Set Abort request for mailbox 0.
+ 711              		.loc 1 333 0
+ 712 00b0 0121     		movs	r1, #1
+ 713 00b2 6965     		str	r1, [r5, #84]
+ 335:Ourwares/can_iface.c **** 		}
+ 714              		.loc 1 335 0
+ 715 00b4 2868     		ldr	r0, [r5]
+ 716 00b6 FFF7FEFF 		bl	HAL_CAN_AbortTxRequest
+ 717              	.LVL71:
+ 718              	.L50:
+ 339:Ourwares/can_iface.c **** 
+ 719              		.loc 1 339 0
+ 720 00ba FFF7FEFF 		bl	vPortExitCritical
+ 721              	.LVL72:
+ 341:Ourwares/can_iface.c **** }
+ 722              		.loc 1 341 0
+ 723 00be 0020     		movs	r0, #0
+ 342:Ourwares/can_iface.c **** /*---------------------------------------------------------------------------------------------
+ 724              		.loc 1 342 0
+ 725 00c0 BDE8F883 		pop	{r3, r4, r5, r6, r7, r8, r9, pc}
+ 726              	.LVL73:
+ 727              	.L54:
+ 728              		.align	2
+ 729              	.L53:
+ 730 00c4 F8FF1F00 		.word	2097144
+ 731              		.cfi_endproc
+ 732              	.LFE134:
+ 734              		.section	.text.getpctl,"ax",%progbits
+ 735              		.align	2
+ 736              		.global	getpctl
+ 737              		.thumb
+ 738              		.thumb_func
+ 740              	getpctl:
+ 741              	.LFB137:
+ 403:Ourwares/can_iface.c **** 
+ 404:Ourwares/can_iface.c **** //	reenable_TXints(save);
+ 405:Ourwares/can_iface.c **** 	return;
+ 406:Ourwares/can_iface.c **** }
+ 407:Ourwares/can_iface.c **** 
+ 408:Ourwares/can_iface.c **** /*#######################################################################################
+ 409:Ourwares/can_iface.c ****  * ISR CAN Callback routines
+ 410:Ourwares/can_iface.c ****  *####################################################################################### */
+ 411:Ourwares/can_iface.c **** 
+ 412:Ourwares/can_iface.c **** /* *********************************************************************
+ 413:Ourwares/can_iface.c ****  * struct CAN_CTLBLOCK* getpctl(CAN_HandleTypeDef *phcan);
+ 414:Ourwares/can_iface.c ****  * @brief	: Look up CAN control block pointer, given 'MX CAN handle from callback
+ 415:Ourwares/can_iface.c ****  * @param	: phcan = pointer to 'MX CAN handle (control block)
+ARM GAS  /tmp/ccorA0ob.s 			page 23
+
+
+ 416:Ourwares/can_iface.c ****  * @return	: Pointer to our CAN control bock
+ 417:Ourwares/can_iface.c ****  * *********************************************************************/
+ 418:Ourwares/can_iface.c **** struct CAN_CTLBLOCK* getpctl(CAN_HandleTypeDef *phcan)
+ 419:Ourwares/can_iface.c **** {
+ 742              		.loc 1 419 0
+ 743              		.cfi_startproc
+ 744              		@ args = 0, pretend = 0, frame = 0
+ 745              		@ frame_needed = 0, uses_anonymous_args = 0
+ 746              		@ link register save eliminated.
+ 747              	.LVL74:
+ 420:Ourwares/can_iface.c **** 	struct CAN_CTLBLOCK** ppx = &pctllist[0];
+ 748              		.loc 1 420 0
+ 749 0000 064B     		ldr	r3, .L59
+ 421:Ourwares/can_iface.c **** 	while (ppx != ppctllist) // Step through list of pointers 
+ 750              		.loc 1 421 0
+ 751 0002 04E0     		b	.L56
+ 752              	.LVL75:
+ 753              	.L58:
+ 422:Ourwares/can_iface.c **** 	{
+ 423:Ourwares/can_iface.c **** 		if ( (*ppx)->phcan == phcan) break;
+ 754              		.loc 1 423 0
+ 755 0004 1A68     		ldr	r2, [r3]
+ 756 0006 1268     		ldr	r2, [r2]
+ 757 0008 8242     		cmp	r2, r0
+ 758 000a 04D0     		beq	.L57
+ 424:Ourwares/can_iface.c **** 		ppx++;
+ 759              		.loc 1 424 0
+ 760 000c 0433     		adds	r3, r3, #4
+ 761              	.LVL76:
+ 762              	.L56:
+ 421:Ourwares/can_iface.c **** 	while (ppx != ppctllist) // Step through list of pointers 
+ 763              		.loc 1 421 0
+ 764 000e 044A     		ldr	r2, .L59+4
+ 765 0010 1268     		ldr	r2, [r2]
+ 766 0012 9342     		cmp	r3, r2
+ 767 0014 F6D1     		bne	.L58
+ 768              	.L57:
+ 425:Ourwares/can_iface.c **** 	}
+ 426:Ourwares/can_iface.c **** 	return *ppx;
+ 427:Ourwares/can_iface.c **** }
+ 769              		.loc 1 427 0
+ 770 0016 1868     		ldr	r0, [r3]
+ 771              	.LVL77:
+ 772 0018 7047     		bx	lr
+ 773              	.L60:
+ 774 001a 00BF     		.align	2
+ 775              	.L59:
+ 776 001c 00000000 		.word	.LANCHOR0
+ 777 0020 00000000 		.word	.LANCHOR1
+ 778              		.cfi_endproc
+ 779              	.LFE137:
+ 781              		.section	.text.unloadfifo,"ax",%progbits
+ 782              		.align	2
+ 783              		.thumb
+ 784              		.thumb_func
+ 786              	unloadfifo:
+ 787              	.LFB141:
+ARM GAS  /tmp/ccorA0ob.s 			page 24
+
+
+ 428:Ourwares/can_iface.c **** 
+ 429:Ourwares/can_iface.c **** /* Transmission Mailbox 0 complete callback. */
+ 430:Ourwares/can_iface.c **** void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef *phcan)
+ 431:Ourwares/can_iface.c **** {
+ 432:Ourwares/can_iface.c **** 	struct CAN_CTLBLOCK* pctl = getpctl(phcan); // Lookup our pointer
+ 433:Ourwares/can_iface.c **** 
+ 434:Ourwares/can_iface.c **** 	/* Loop back CAN =>TX<= msgs. */
+ 435:Ourwares/can_iface.c **** #ifdef CANMSGLOOPBACK
+ 436:Ourwares/can_iface.c **** volatile	struct CAN_POOLBLOCK* p = pctl->pend.plinknext;
+ 437:Ourwares/can_iface.c **** 	struct CANRCVBUFN ncan;
+ 438:Ourwares/can_iface.c **** 	ncan.pctl = pctl;
+ 439:Ourwares/can_iface.c **** 	ncan.can = p->can;
+ 440:Ourwares/can_iface.c **** 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+ 441:Ourwares/can_iface.c **** 			*pctl->cirptrs.pwork = ncan;
+ 442:Ourwares/can_iface.c **** 			pctl->cirptrs.pwork++;
+ 443:Ourwares/can_iface.c **** 			if (pctl->cirptrs.pwork == pctl->cirptrs.pend) pctl->cirptrs.pwork = pctl->cirptrs.pbegin;
+ 444:Ourwares/can_iface.c **** 
+ 445:Ourwares/can_iface.c **** 			if (pctl->tsknote.tskhandle != NULL)
+ 446:Ourwares/can_iface.c **** 			{ // Here, one task will be notified a msg added to circular buffer
+ 447:Ourwares/can_iface.c **** 				xTaskNotifyFromISR(pctl->tsknote.tskhandle,\
+ 448:Ourwares/can_iface.c **** 					pctl->tsknote.notebit, eSetBits,\
+ 449:Ourwares/can_iface.c **** 					&xHigherPriorityTaskWoken );
+ 450:Ourwares/can_iface.c **** 			}
+ 451:Ourwares/can_iface.c **** 
+ 452:Ourwares/can_iface.c **** #endif
+ 453:Ourwares/can_iface.c **** 
+ 454:Ourwares/can_iface.c **** 	moveremove2(pctl);	// remove from pending list, add to free list
+ 455:Ourwares/can_iface.c **** 	pctl->abortflag = 0;
+ 456:Ourwares/can_iface.c **** 	loadmbx2(pctl);		// Load mailbox 0.  Mailbox should be available/empty.
+ 457:Ourwares/can_iface.c **** //portYIELD_FROM_ISR( xHigherPriorityTaskWoken ); // Trigger scheduler
+ 458:Ourwares/can_iface.c **** }
+ 459:Ourwares/can_iface.c **** 
+ 460:Ourwares/can_iface.c **** /* Transmission Mailbox 0 Abort callback. */
+ 461:Ourwares/can_iface.c **** void HAL_CAN_TxMailbox0AbortCallback(CAN_HandleTypeDef *phcan)
+ 462:Ourwares/can_iface.c **** {
+ 463:Ourwares/can_iface.c **** 	struct CAN_CTLBLOCK* pctl = getpctl(phcan);
+ 464:Ourwares/can_iface.c **** 	loadmbx2(pctl);		// Load mailbox 0.  Mailbox should be available/empty.
+ 465:Ourwares/can_iface.c **** 	pctl->abortflag = 0;
+ 466:Ourwares/can_iface.c **** }
+ 467:Ourwares/can_iface.c **** 
+ 468:Ourwares/can_iface.c **** /* Error callback */
+ 469:Ourwares/can_iface.c **** void HAL_CAN_ErrorCallback(CAN_HandleTypeDef *phcan)
+ 470:Ourwares/can_iface.c **** {
+ 471:Ourwares/can_iface.c **** 	struct CAN_CTLBLOCK* pctl = getpctl(phcan);
+ 472:Ourwares/can_iface.c **** 	if ((phcan->ErrorCode & HAL_CAN_ERROR_TX_ALST0) != 0 )
+ 473:Ourwares/can_iface.c **** 	{
+ 474:Ourwares/can_iface.c **** 		pctl->can_errors.can_tx_alst0_err += 1; // Running ct of arb lost: Mostly for debugging/monitorin
+ 475:Ourwares/can_iface.c **** 		if ((pctl->pxprv->plinknext->x.xb[2] & SOFTNART) != 0)
+ 476:Ourwares/can_iface.c **** 		{ // Here this msg was not to be re-sent, i.e. NART
+ 477:Ourwares/can_iface.c **** 			moveremove2(pctl);	// Remove msg from pending queue
+ 478:Ourwares/can_iface.c **** 		}
+ 479:Ourwares/can_iface.c **** debugTX1c += 1;
+ 480:Ourwares/can_iface.c **** 	}
+ 481:Ourwares/can_iface.c **** 	else if ((phcan->ErrorCode & HAL_CAN_ERROR_TX_TERR0) != 0 )
+ 482:Ourwares/can_iface.c **** 	{
+ 483:Ourwares/can_iface.c **** 		pctl->pxprv->plinknext->x.xb[0] += 1;	// Count errors for this msg
+ 484:Ourwares/can_iface.c **** 		if (pctl->pxprv->plinknext->x.xb[0] > pctl->pxprv->plinknext->x.xb[1])
+ARM GAS  /tmp/ccorA0ob.s 			page 25
+
+
+ 485:Ourwares/can_iface.c **** 		{ // Here, too many error, remove from list
+ 486:Ourwares/can_iface.c **** 			pctl->can_errors.can_tx_bombed += 1;	// Number of bombouts
+ 487:Ourwares/can_iface.c **** 			moveremove2(pctl);	// Remove msg from pending queue
+ 488:Ourwares/can_iface.c **** 		}
+ 489:Ourwares/can_iface.c **** 	}	
+ 490:Ourwares/can_iface.c **** 	loadmbx2(pctl);		// Load mailbox 0.  Mailbox should be available/empty.
+ 491:Ourwares/can_iface.c **** 	return;
+ 492:Ourwares/can_iface.c **** }
+ 493:Ourwares/can_iface.c **** /* *********************************************************************
+ 494:Ourwares/can_iface.c ****  * static void unloadfifo(CAN_HandleTypeDef *phcan, uint32_t RxFifo);
+ 495:Ourwares/can_iface.c ****  * @brief	: Empty FIFOx hardware buffer of msgs and place on queue
+ 496:Ourwares/can_iface.c ****  * @param	: phcan = pointer to 'MX CAN handle (control block)
+ 497:Ourwares/can_iface.c ****  * @return	: Pointer to our CAN control bock
+ 498:Ourwares/can_iface.c ****  * *********************************************************************/
+ 499:Ourwares/can_iface.c **** uint32_t debug1;
+ 500:Ourwares/can_iface.c **** 
+ 501:Ourwares/can_iface.c **** static void unloadfifo(CAN_HandleTypeDef *phcan, uint32_t RxFifo)
+ 502:Ourwares/can_iface.c **** {
+ 788              		.loc 1 502 0
+ 789              		.cfi_startproc
+ 790              		@ args = 0, pretend = 0, frame = 64
+ 791              		@ frame_needed = 0, uses_anonymous_args = 0
+ 792              	.LVL78:
+ 793 0000 2DE9F041 		push	{r4, r5, r6, r7, r8, lr}
+ 794              	.LCFI13:
+ 795              		.cfi_def_cfa_offset 24
+ 796              		.cfi_offset 4, -24
+ 797              		.cfi_offset 5, -20
+ 798              		.cfi_offset 6, -16
+ 799              		.cfi_offset 7, -12
+ 800              		.cfi_offset 8, -8
+ 801              		.cfi_offset 14, -4
+ 802 0004 92B0     		sub	sp, sp, #72
+ 803              	.LCFI14:
+ 804              		.cfi_def_cfa_offset 96
+ 805 0006 8846     		mov	r8, r1
+ 503:Ourwares/can_iface.c **** 	struct CANRCVBUFN ncan; // CAN msg plus pctl
+ 504:Ourwares/can_iface.c **** 	ncan.toa = DTWTIME;
+ 806              		.loc 1 504 0
+ 807 0008 204B     		ldr	r3, .L67
+ 808 000a 1B68     		ldr	r3, [r3]
+ 809 000c 1193     		str	r3, [sp, #68]
+ 505:Ourwares/can_iface.c **** debug1 += 1;
+ 810              		.loc 1 505 0
+ 811 000e 204A     		ldr	r2, .L67+4
+ 812 0010 1368     		ldr	r3, [r2]
+ 813 0012 0133     		adds	r3, r3, #1
+ 814 0014 1360     		str	r3, [r2]
+ 506:Ourwares/can_iface.c **** 	HAL_StatusTypeDef ret;
+ 507:Ourwares/can_iface.c **** 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+ 815              		.loc 1 507 0
+ 816 0016 0023     		movs	r3, #0
+ 817 0018 0B93     		str	r3, [sp, #44]
+ 508:Ourwares/can_iface.c **** 	CAN_RxHeaderTypeDef header;
+ 509:Ourwares/can_iface.c **** 	uint8_t data[8];
+ 510:Ourwares/can_iface.c **** 
+ 511:Ourwares/can_iface.c **** 	struct CAN_CTLBLOCK* pctl = getpctl(phcan); // Lookup pctl given phcan
+ARM GAS  /tmp/ccorA0ob.s 			page 26
+
+
+ 818              		.loc 1 511 0
+ 819 001a FFF7FEFF 		bl	getpctl
+ 820              	.LVL79:
+ 821 001e 0546     		mov	r5, r0
+ 822              	.LVL80:
+ 823              	.L64:
+ 512:Ourwares/can_iface.c **** 
+ 513:Ourwares/can_iface.c **** 	do /* Unload hardware RX FIFO */
+ 514:Ourwares/can_iface.c **** 	{
+ 515:Ourwares/can_iface.c **** // NOTE: this could be done directly and avoid the expand/compress overhead
+ 516:Ourwares/can_iface.c **** // but it would become processor dependent and would cheat on HAL.
+ 517:Ourwares/can_iface.c **** 		ret = HAL_CAN_GetRxMessage(pctl->phcan, RxFifo, &header, &data[0]);
+ 824              		.loc 1 517 0
+ 825 0020 02AB     		add	r3, sp, #8
+ 826 0022 04AA     		add	r2, sp, #16
+ 827 0024 4146     		mov	r1, r8
+ 828 0026 2868     		ldr	r0, [r5]
+ 829 0028 FFF7FEFF 		bl	HAL_CAN_GetRxMessage
+ 830              	.LVL81:
+ 518:Ourwares/can_iface.c **** 		if (ret == HAL_OK)
+ 831              		.loc 1 518 0
+ 832 002c 0746     		mov	r7, r0
+ 833 002e F0B9     		cbnz	r0, .L62
+ 519:Ourwares/can_iface.c **** 		{
+ 520:Ourwares/can_iface.c **** 			/* Setup msg with pctl for our format */
+ 521:Ourwares/can_iface.c **** 			ncan.pctl = pctl;
+ 834              		.loc 1 521 0
+ 835 0030 1095     		str	r5, [sp, #64]
+ 522:Ourwares/can_iface.c **** 			canmsg_compress(&ncan.can, &header, &data[0]);
+ 836              		.loc 1 522 0
+ 837 0032 02AA     		add	r2, sp, #8
+ 838 0034 04A9     		add	r1, sp, #16
+ 839 0036 0CA8     		add	r0, sp, #48
+ 840              	.LVL82:
+ 841 0038 FFF7FEFF 		bl	canmsg_compress
+ 842              	.LVL83:
+ 523:Ourwares/can_iface.c **** 
+ 524:Ourwares/can_iface.c **** 			/* Place on queue for Mailbox task to filter, distribute, notify, etc. */
+ 525:Ourwares/can_iface.c **** 			*pctl->cirptrs.pwork = ncan; // Copy struct
+ 843              		.loc 1 525 0
+ 844 003c 2E6E     		ldr	r6, [r5, #96]
+ 845 003e 0CAC     		add	r4, sp, #48
+ 846 0040 0FCC     		ldmia	r4!, {r0, r1, r2, r3}
+ 847 0042 0FC6     		stmia	r6!, {r0, r1, r2, r3}
+ 848 0044 94E80300 		ldmia	r4, {r0, r1}
+ 849 0048 86E80300 		stmia	r6, {r0, r1}
+ 526:Ourwares/can_iface.c **** 			pctl->cirptrs.pwork++;       // Advance 'add' pointer
+ 850              		.loc 1 526 0
+ 851 004c 2B6E     		ldr	r3, [r5, #96]
+ 852 004e 1833     		adds	r3, r3, #24
+ 853 0050 2B66     		str	r3, [r5, #96]
+ 527:Ourwares/can_iface.c **** 			if (pctl->cirptrs.pwork == pctl->cirptrs.pend) pctl->cirptrs.pwork = pctl->cirptrs.pbegin;
+ 854              		.loc 1 527 0
+ 855 0052 EA6D     		ldr	r2, [r5, #92]
+ 856 0054 9342     		cmp	r3, r2
+ 857 0056 01D1     		bne	.L63
+ 858              		.loc 1 527 0 is_stmt 0 discriminator 1
+ARM GAS  /tmp/ccorA0ob.s 			page 27
+
+
+ 859 0058 AB6D     		ldr	r3, [r5, #88]
+ 860 005a 2B66     		str	r3, [r5, #96]
+ 861              	.L63:
+ 528:Ourwares/can_iface.c **** 
+ 529:Ourwares/can_iface.c **** 			if (pctl->tsknote.tskhandle != NULL)
+ 862              		.loc 1 529 0 is_stmt 1
+ 863 005c 686E     		ldr	r0, [r5, #100]
+ 864 005e 30B1     		cbz	r0, .L62
+ 530:Ourwares/can_iface.c **** 			{ // Here, notify one task a new msg added to circular buffer
+ 531:Ourwares/can_iface.c **** 				xTaskNotifyFromISR(pctl->tsknote.tskhandle,\
+ 865              		.loc 1 531 0
+ 866 0060 A96E     		ldr	r1, [r5, #104]
+ 867 0062 0BAB     		add	r3, sp, #44
+ 868 0064 0093     		str	r3, [sp]
+ 869 0066 0023     		movs	r3, #0
+ 870 0068 0122     		movs	r2, #1
+ 871 006a FFF7FEFF 		bl	xTaskGenericNotifyFromISR
+ 872              	.LVL84:
+ 873              	.L62:
+ 532:Ourwares/can_iface.c **** 					pctl->tsknote.notebit, eSetBits,\
+ 533:Ourwares/can_iface.c **** 					&xHigherPriorityTaskWoken );
+ 534:Ourwares/can_iface.c **** 			}
+ 535:Ourwares/can_iface.c **** 		}
+ 536:Ourwares/can_iface.c **** 	} while (ret == HAL_OK); //JIC there is more than one in the hw fifo
+ 874              		.loc 1 536 0
+ 875 006e 002F     		cmp	r7, #0
+ 876 0070 D6D0     		beq	.L64
+ 537:Ourwares/can_iface.c **** 	portYIELD_FROM_ISR( xHigherPriorityTaskWoken ); // Trigger scheduler
+ 877              		.loc 1 537 0
+ 878 0072 0B9B     		ldr	r3, [sp, #44]
+ 879 0074 3BB1     		cbz	r3, .L61
+ 880              		.loc 1 537 0 is_stmt 0 discriminator 1
+ 881 0076 4FF08052 		mov	r2, #268435456
+ 882 007a 064B     		ldr	r3, .L67+8
+ 883 007c 1A60     		str	r2, [r3]
+ 884              		.syntax unified
+ 885              	@ 537 "Ourwares/can_iface.c" 1
+ 886 007e BFF34F8F 		dsb
+ 887              	@ 0 "" 2
+ 888              	@ 537 "Ourwares/can_iface.c" 1
+ 889 0082 BFF36F8F 		isb
+ 890              	@ 0 "" 2
+ 891              		.thumb
+ 892              		.syntax unified
+ 893              	.L61:
+ 538:Ourwares/can_iface.c **** }
+ 894              		.loc 1 538 0 is_stmt 1
+ 895 0086 12B0     		add	sp, sp, #72
+ 896              	.LCFI15:
+ 897              		.cfi_def_cfa_offset 24
+ 898              		@ sp needed
+ 899 0088 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 900              	.LVL85:
+ 901              	.L68:
+ 902              		.align	2
+ 903              	.L67:
+ 904 008c 041000E0 		.word	-536866812
+ARM GAS  /tmp/ccorA0ob.s 			page 28
+
+
+ 905 0090 00000000 		.word	debug1
+ 906 0094 04ED00E0 		.word	-536810236
+ 907              		.cfi_endproc
+ 908              	.LFE141:
+ 910              		.section	.text.HAL_CAN_TxMailbox0CompleteCallback,"ax",%progbits
+ 911              		.align	2
+ 912              		.global	HAL_CAN_TxMailbox0CompleteCallback
+ 913              		.thumb
+ 914              		.thumb_func
+ 916              	HAL_CAN_TxMailbox0CompleteCallback:
+ 917              	.LFB138:
+ 431:Ourwares/can_iface.c **** 	struct CAN_CTLBLOCK* pctl = getpctl(phcan); // Lookup our pointer
+ 918              		.loc 1 431 0
+ 919              		.cfi_startproc
+ 920              		@ args = 0, pretend = 0, frame = 32
+ 921              		@ frame_needed = 0, uses_anonymous_args = 0
+ 922              	.LVL86:
+ 923 0000 70B5     		push	{r4, r5, r6, lr}
+ 924              	.LCFI16:
+ 925              		.cfi_def_cfa_offset 16
+ 926              		.cfi_offset 4, -16
+ 927              		.cfi_offset 5, -12
+ 928              		.cfi_offset 6, -8
+ 929              		.cfi_offset 14, -4
+ 930 0002 8AB0     		sub	sp, sp, #40
+ 931              	.LCFI17:
+ 932              		.cfi_def_cfa_offset 56
+ 432:Ourwares/can_iface.c **** 
+ 933              		.loc 1 432 0
+ 934 0004 FFF7FEFF 		bl	getpctl
+ 935              	.LVL87:
+ 936 0008 0546     		mov	r5, r0
+ 937              	.LVL88:
+ 436:Ourwares/can_iface.c **** 	struct CANRCVBUFN ncan;
+ 938              		.loc 1 436 0
+ 939 000a 036B     		ldr	r3, [r0, #48]
+ 940              	.LVL89:
+ 438:Ourwares/can_iface.c **** 	ncan.can = p->can;
+ 941              		.loc 1 438 0
+ 942 000c 0890     		str	r0, [sp, #32]
+ 439:Ourwares/can_iface.c **** 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+ 943              		.loc 1 439 0
+ 944 000e 04AC     		add	r4, sp, #16
+ 945 0010 0833     		adds	r3, r3, #8
+ 946              	.LVL90:
+ 947 0012 0FCB     		ldmia	r3, {r0, r1, r2, r3}
+ 948              	.LVL91:
+ 949 0014 84E80F00 		stmia	r4, {r0, r1, r2, r3}
+ 440:Ourwares/can_iface.c **** 			*pctl->cirptrs.pwork = ncan;
+ 950              		.loc 1 440 0
+ 951 0018 0023     		movs	r3, #0
+ 952 001a 0393     		str	r3, [sp, #12]
+ 441:Ourwares/can_iface.c **** 			pctl->cirptrs.pwork++;
+ 953              		.loc 1 441 0
+ 954 001c 2E6E     		ldr	r6, [r5, #96]
+ 955 001e 0FCC     		ldmia	r4!, {r0, r1, r2, r3}
+ 956 0020 0FC6     		stmia	r6!, {r0, r1, r2, r3}
+ARM GAS  /tmp/ccorA0ob.s 			page 29
+
+
+ 957 0022 94E80300 		ldmia	r4, {r0, r1}
+ 958 0026 86E80300 		stmia	r6, {r0, r1}
+ 442:Ourwares/can_iface.c **** 			if (pctl->cirptrs.pwork == pctl->cirptrs.pend) pctl->cirptrs.pwork = pctl->cirptrs.pbegin;
+ 959              		.loc 1 442 0
+ 960 002a 2B6E     		ldr	r3, [r5, #96]
+ 961 002c 1833     		adds	r3, r3, #24
+ 962 002e 2B66     		str	r3, [r5, #96]
+ 443:Ourwares/can_iface.c **** 
+ 963              		.loc 1 443 0
+ 964 0030 EA6D     		ldr	r2, [r5, #92]
+ 965 0032 9342     		cmp	r3, r2
+ 966 0034 01D1     		bne	.L70
+ 443:Ourwares/can_iface.c **** 
+ 967              		.loc 1 443 0 is_stmt 0 discriminator 1
+ 968 0036 AB6D     		ldr	r3, [r5, #88]
+ 969 0038 2B66     		str	r3, [r5, #96]
+ 970              	.L70:
+ 445:Ourwares/can_iface.c **** 			{ // Here, one task will be notified a msg added to circular buffer
+ 971              		.loc 1 445 0 is_stmt 1
+ 972 003a 686E     		ldr	r0, [r5, #100]
+ 973 003c 30B1     		cbz	r0, .L71
+ 447:Ourwares/can_iface.c **** 					pctl->tsknote.notebit, eSetBits,\
+ 974              		.loc 1 447 0
+ 975 003e A96E     		ldr	r1, [r5, #104]
+ 976 0040 03AB     		add	r3, sp, #12
+ 977 0042 0093     		str	r3, [sp]
+ 978 0044 0023     		movs	r3, #0
+ 979 0046 0122     		movs	r2, #1
+ 980 0048 FFF7FEFF 		bl	xTaskGenericNotifyFromISR
+ 981              	.LVL92:
+ 982              	.L71:
+ 454:Ourwares/can_iface.c **** 	pctl->abortflag = 0;
+ 983              		.loc 1 454 0
+ 984 004c 2846     		mov	r0, r5
+ 985 004e FFF7FEFF 		bl	moveremove2
+ 986              	.LVL93:
+ 455:Ourwares/can_iface.c **** 	loadmbx2(pctl);		// Load mailbox 0.  Mailbox should be available/empty.
+ 987              		.loc 1 455 0
+ 988 0052 0023     		movs	r3, #0
+ 989 0054 6B65     		str	r3, [r5, #84]
+ 456:Ourwares/can_iface.c **** //portYIELD_FROM_ISR( xHigherPriorityTaskWoken ); // Trigger scheduler
+ 990              		.loc 1 456 0
+ 991 0056 2846     		mov	r0, r5
+ 992 0058 FFF7FEFF 		bl	loadmbx2
+ 993              	.LVL94:
+ 458:Ourwares/can_iface.c **** 
+ 994              		.loc 1 458 0
+ 995 005c 0AB0     		add	sp, sp, #40
+ 996              	.LCFI18:
+ 997              		.cfi_def_cfa_offset 16
+ 998              		@ sp needed
+ 999 005e 70BD     		pop	{r4, r5, r6, pc}
+ 1000              		.cfi_endproc
+ 1001              	.LFE138:
+ 1003              		.section	.text.HAL_CAN_TxMailbox0AbortCallback,"ax",%progbits
+ 1004              		.align	2
+ 1005              		.global	HAL_CAN_TxMailbox0AbortCallback
+ARM GAS  /tmp/ccorA0ob.s 			page 30
+
+
+ 1006              		.thumb
+ 1007              		.thumb_func
+ 1009              	HAL_CAN_TxMailbox0AbortCallback:
+ 1010              	.LFB139:
+ 462:Ourwares/can_iface.c **** 	struct CAN_CTLBLOCK* pctl = getpctl(phcan);
+ 1011              		.loc 1 462 0
+ 1012              		.cfi_startproc
+ 1013              		@ args = 0, pretend = 0, frame = 0
+ 1014              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1015              	.LVL95:
+ 1016 0000 10B5     		push	{r4, lr}
+ 1017              	.LCFI19:
+ 1018              		.cfi_def_cfa_offset 8
+ 1019              		.cfi_offset 4, -8
+ 1020              		.cfi_offset 14, -4
+ 463:Ourwares/can_iface.c **** 	loadmbx2(pctl);		// Load mailbox 0.  Mailbox should be available/empty.
+ 1021              		.loc 1 463 0
+ 1022 0002 FFF7FEFF 		bl	getpctl
+ 1023              	.LVL96:
+ 1024 0006 0446     		mov	r4, r0
+ 1025              	.LVL97:
+ 464:Ourwares/can_iface.c **** 	pctl->abortflag = 0;
+ 1026              		.loc 1 464 0
+ 1027 0008 FFF7FEFF 		bl	loadmbx2
+ 1028              	.LVL98:
+ 465:Ourwares/can_iface.c **** }
+ 1029              		.loc 1 465 0
+ 1030 000c 0023     		movs	r3, #0
+ 1031 000e 6365     		str	r3, [r4, #84]
+ 1032 0010 10BD     		pop	{r4, pc}
+ 1033              		.cfi_endproc
+ 1034              	.LFE139:
+ 1036 0012 00BF     		.section	.text.HAL_CAN_ErrorCallback,"ax",%progbits
+ 1037              		.align	2
+ 1038              		.global	HAL_CAN_ErrorCallback
+ 1039              		.thumb
+ 1040              		.thumb_func
+ 1042              	HAL_CAN_ErrorCallback:
+ 1043              	.LFB140:
+ 470:Ourwares/can_iface.c **** 	struct CAN_CTLBLOCK* pctl = getpctl(phcan);
+ 1044              		.loc 1 470 0
+ 1045              		.cfi_startproc
+ 1046              		@ args = 0, pretend = 0, frame = 0
+ 1047              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1048              	.LVL99:
+ 1049 0000 38B5     		push	{r3, r4, r5, lr}
+ 1050              	.LCFI20:
+ 1051              		.cfi_def_cfa_offset 16
+ 1052              		.cfi_offset 3, -16
+ 1053              		.cfi_offset 4, -12
+ 1054              		.cfi_offset 5, -8
+ 1055              		.cfi_offset 14, -4
+ 1056 0002 0546     		mov	r5, r0
+ 471:Ourwares/can_iface.c **** 	if ((phcan->ErrorCode & HAL_CAN_ERROR_TX_ALST0) != 0 )
+ 1057              		.loc 1 471 0
+ 1058 0004 FFF7FEFF 		bl	getpctl
+ 1059              	.LVL100:
+ARM GAS  /tmp/ccorA0ob.s 			page 31
+
+
+ 1060 0008 0446     		mov	r4, r0
+ 1061              	.LVL101:
+ 472:Ourwares/can_iface.c **** 	{
+ 1062              		.loc 1 472 0
+ 1063 000a 6B6A     		ldr	r3, [r5, #36]
+ 1064 000c 13F4006F 		tst	r3, #2048
+ 1065 0010 0FD0     		beq	.L76
+ 474:Ourwares/can_iface.c **** 		if ((pctl->pxprv->plinknext->x.xb[2] & SOFTNART) != 0)
+ 1066              		.loc 1 474 0
+ 1067 0012 436F     		ldr	r3, [r0, #116]
+ 1068 0014 0133     		adds	r3, r3, #1
+ 1069 0016 4367     		str	r3, [r0, #116]
+ 475:Ourwares/can_iface.c **** 		{ // Here this msg was not to be re-sent, i.e. NART
+ 1070              		.loc 1 475 0
+ 1071 0018 036D     		ldr	r3, [r0, #80]
+ 1072 001a 1B68     		ldr	r3, [r3]
+ 1073 001c 9B7E     		ldrb	r3, [r3, #26]	@ zero_extendqisi2
+ 1074 001e 13F0010F 		tst	r3, #1
+ 1075 0022 01D0     		beq	.L77
+ 477:Ourwares/can_iface.c **** 		}
+ 1076              		.loc 1 477 0
+ 1077 0024 FFF7FEFF 		bl	moveremove2
+ 1078              	.LVL102:
+ 1079              	.L77:
+ 479:Ourwares/can_iface.c **** 	}
+ 1080              		.loc 1 479 0
+ 1081 0028 104A     		ldr	r2, .L80
+ 1082 002a 1368     		ldr	r3, [r2]
+ 1083 002c 0133     		adds	r3, r3, #1
+ 1084 002e 1360     		str	r3, [r2]
+ 1085 0030 18E0     		b	.L78
+ 1086              	.LVL103:
+ 1087              	.L76:
+ 481:Ourwares/can_iface.c **** 	{
+ 1088              		.loc 1 481 0
+ 1089 0032 6B6A     		ldr	r3, [r5, #36]
+ 1090 0034 13F4805F 		tst	r3, #4096
+ 1091 0038 14D0     		beq	.L78
+ 483:Ourwares/can_iface.c **** 		if (pctl->pxprv->plinknext->x.xb[0] > pctl->pxprv->plinknext->x.xb[1])
+ 1092              		.loc 1 483 0
+ 1093 003a 036D     		ldr	r3, [r0, #80]
+ 1094 003c 1A68     		ldr	r2, [r3]
+ 1095 003e 137E     		ldrb	r3, [r2, #24]	@ zero_extendqisi2
+ 1096 0040 0133     		adds	r3, r3, #1
+ 1097 0042 DBB2     		uxtb	r3, r3
+ 1098 0044 1376     		strb	r3, [r2, #24]
+ 484:Ourwares/can_iface.c **** 		{ // Here, too many error, remove from list
+ 1099              		.loc 1 484 0
+ 1100 0046 036D     		ldr	r3, [r0, #80]
+ 1101 0048 1B68     		ldr	r3, [r3]
+ 1102 004a 1A7E     		ldrb	r2, [r3, #24]	@ zero_extendqisi2
+ 1103 004c D2B2     		uxtb	r2, r2
+ 1104 004e 036D     		ldr	r3, [r0, #80]
+ 1105 0050 1B68     		ldr	r3, [r3]
+ 1106 0052 5B7E     		ldrb	r3, [r3, #25]	@ zero_extendqisi2
+ 1107 0054 DBB2     		uxtb	r3, r3
+ 1108 0056 9A42     		cmp	r2, r3
+ARM GAS  /tmp/ccorA0ob.s 			page 32
+
+
+ 1109 0058 04D9     		bls	.L78
+ 486:Ourwares/can_iface.c **** 			moveremove2(pctl);	// Remove msg from pending queue
+ 1110              		.loc 1 486 0
+ 1111 005a 036F     		ldr	r3, [r0, #112]
+ 1112 005c 0133     		adds	r3, r3, #1
+ 1113 005e 0367     		str	r3, [r0, #112]
+ 487:Ourwares/can_iface.c **** 		}
+ 1114              		.loc 1 487 0
+ 1115 0060 FFF7FEFF 		bl	moveremove2
+ 1116              	.LVL104:
+ 1117              	.L78:
+ 490:Ourwares/can_iface.c **** 	return;
+ 1118              		.loc 1 490 0
+ 1119 0064 2046     		mov	r0, r4
+ 1120 0066 FFF7FEFF 		bl	loadmbx2
+ 1121              	.LVL105:
+ 1122 006a 38BD     		pop	{r3, r4, r5, pc}
+ 1123              	.LVL106:
+ 1124              	.L81:
+ 1125              		.align	2
+ 1126              	.L80:
+ 1127 006c 00000000 		.word	debugTX1c
+ 1128              		.cfi_endproc
+ 1129              	.LFE140:
+ 1131              		.section	.text.HAL_CAN_RxFifo0MsgPendingCallback,"ax",%progbits
+ 1132              		.align	2
+ 1133              		.global	HAL_CAN_RxFifo0MsgPendingCallback
+ 1134              		.thumb
+ 1135              		.thumb_func
+ 1137              	HAL_CAN_RxFifo0MsgPendingCallback:
+ 1138              	.LFB142:
+ 539:Ourwares/can_iface.c **** /* Rx FIFO 0 message pending callback. */
+ 540:Ourwares/can_iface.c **** void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *phcan)
+ 541:Ourwares/can_iface.c **** {
+ 1139              		.loc 1 541 0
+ 1140              		.cfi_startproc
+ 1141              		@ args = 0, pretend = 0, frame = 0
+ 1142              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1143              	.LVL107:
+ 1144 0000 08B5     		push	{r3, lr}
+ 1145              	.LCFI21:
+ 1146              		.cfi_def_cfa_offset 8
+ 1147              		.cfi_offset 3, -8
+ 1148              		.cfi_offset 14, -4
+ 542:Ourwares/can_iface.c **** 	unloadfifo(phcan, CAN_RX_FIFO0);
+ 1149              		.loc 1 542 0
+ 1150 0002 0021     		movs	r1, #0
+ 1151 0004 FFF7FEFF 		bl	unloadfifo
+ 1152              	.LVL108:
+ 1153 0008 08BD     		pop	{r3, pc}
+ 1154              		.cfi_endproc
+ 1155              	.LFE142:
+ 1157 000a 00BF     		.section	.text.HAL_CAN_RxFifo1MsgPendingCallback,"ax",%progbits
+ 1158              		.align	2
+ 1159              		.global	HAL_CAN_RxFifo1MsgPendingCallback
+ 1160              		.thumb
+ 1161              		.thumb_func
+ARM GAS  /tmp/ccorA0ob.s 			page 33
+
+
+ 1163              	HAL_CAN_RxFifo1MsgPendingCallback:
+ 1164              	.LFB143:
+ 543:Ourwares/can_iface.c **** 	return;
+ 544:Ourwares/can_iface.c **** }
+ 545:Ourwares/can_iface.c **** /* Rx FIFO 1 message pending callback. */
+ 546:Ourwares/can_iface.c **** void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *phcan)
+ 547:Ourwares/can_iface.c **** {
+ 1165              		.loc 1 547 0
+ 1166              		.cfi_startproc
+ 1167              		@ args = 0, pretend = 0, frame = 0
+ 1168              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1169              	.LVL109:
+ 1170 0000 08B5     		push	{r3, lr}
+ 1171              	.LCFI22:
+ 1172              		.cfi_def_cfa_offset 8
+ 1173              		.cfi_offset 3, -8
+ 1174              		.cfi_offset 14, -4
+ 548:Ourwares/can_iface.c **** 	unloadfifo(phcan, CAN_RX_FIFO1);
+ 1175              		.loc 1 548 0
+ 1176 0002 0121     		movs	r1, #1
+ 1177 0004 FFF7FEFF 		bl	unloadfifo
+ 1178              	.LVL110:
+ 1179 0008 08BD     		pop	{r3, pc}
+ 1180              		.cfi_endproc
+ 1181              	.LFE143:
+ 1183              		.comm	debug1,4,4
+ 1184 000a 00BF     		.section	.bss.ppctllist,"aw",%nobits
+ 1185              		.align	2
+ 1186              		.set	.LANCHOR1,. + 0
+ 1189              	ppctllist:
+ 1190 0000 00000000 		.space	4
+ 1191              		.section	.bss.pctllist,"aw",%nobits
+ 1192              		.align	2
+ 1193              		.set	.LANCHOR0,. + 0
+ 1196              	pctllist:
+ 1197 0000 00000000 		.space	16
+ 1197      00000000 
+ 1197      00000000 
+ 1197      00000000 
+ 1198              		.text
+ 1199              	.Letext0:
+ 1200              		.file 2 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/machine/_default_t
+ 1201              		.file 3 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/sys/_stdint.h"
+ 1202              		.file 4 "Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f407xx.h"
+ 1203              		.file 5 "Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f4xx.h"
+ 1204              		.file 6 "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_def.h"
+ 1205              		.file 7 "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_can.h"
+ 1206              		.file 8 "Ourwares/common_misc.h"
+ 1207              		.file 9 "Ourwares/common_can.h"
+ 1208              		.file 10 "Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/portmacro.h"
+ 1209              		.file 11 "Middlewares/Third_Party/FreeRTOS/Source/include/task.h"
+ 1210              		.file 12 "Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS/cmsis_os.h"
+ 1211              		.file 13 "Ourwares/can_iface.h"
+ 1212              		.file 14 "Drivers/CMSIS/Include/core_cm4.h"
+ 1213              		.file 15 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/malloc.h"
+ARM GAS  /tmp/ccorA0ob.s 			page 34
+
+
+DEFINED SYMBOLS
+                            *ABS*:00000000 can_iface.c
+     /tmp/ccorA0ob.s:22     .text.canmsg_compress:00000000 $t
+     /tmp/ccorA0ob.s:26     .text.canmsg_compress:00000000 canmsg_compress
+     /tmp/ccorA0ob.s:96     .text.moveremove2:00000000 $t
+     /tmp/ccorA0ob.s:100    .text.moveremove2:00000000 moveremove2
+     /tmp/ccorA0ob.s:126    .text.loadmbx2:00000000 $t
+     /tmp/ccorA0ob.s:130    .text.loadmbx2:00000000 loadmbx2
+     /tmp/ccorA0ob.s:205    .text.can_iface_add_take:00000000 $t
+     /tmp/ccorA0ob.s:210    .text.can_iface_add_take:00000000 can_iface_add_take
+     /tmp/ccorA0ob.s:260    .text.can_iface_mbx_init:00000000 $t
+     /tmp/ccorA0ob.s:265    .text.can_iface_mbx_init:00000000 can_iface_mbx_init
+     /tmp/ccorA0ob.s:304    .text.can_iface_get_CANmsg:00000000 $t
+     /tmp/ccorA0ob.s:309    .text.can_iface_get_CANmsg:00000000 can_iface_get_CANmsg
+     /tmp/ccorA0ob.s:366    .text.can_iface_init:00000000 $t
+     /tmp/ccorA0ob.s:371    .text.can_iface_init:00000000 can_iface_init
+     /tmp/ccorA0ob.s:568    .text.can_iface_init:000000f0 $d
+     /tmp/ccorA0ob.s:575    .text.can_driver_put:00000000 $t
+     /tmp/ccorA0ob.s:580    .text.can_driver_put:00000000 can_driver_put
+     /tmp/ccorA0ob.s:730    .text.can_driver_put:000000c4 $d
+     /tmp/ccorA0ob.s:735    .text.getpctl:00000000 $t
+     /tmp/ccorA0ob.s:740    .text.getpctl:00000000 getpctl
+     /tmp/ccorA0ob.s:776    .text.getpctl:0000001c $d
+     /tmp/ccorA0ob.s:782    .text.unloadfifo:00000000 $t
+     /tmp/ccorA0ob.s:786    .text.unloadfifo:00000000 unloadfifo
+     /tmp/ccorA0ob.s:904    .text.unloadfifo:0000008c $d
+                            *COM*:00000004 debug1
+     /tmp/ccorA0ob.s:911    .text.HAL_CAN_TxMailbox0CompleteCallback:00000000 $t
+     /tmp/ccorA0ob.s:916    .text.HAL_CAN_TxMailbox0CompleteCallback:00000000 HAL_CAN_TxMailbox0CompleteCallback
+     /tmp/ccorA0ob.s:1004   .text.HAL_CAN_TxMailbox0AbortCallback:00000000 $t
+     /tmp/ccorA0ob.s:1009   .text.HAL_CAN_TxMailbox0AbortCallback:00000000 HAL_CAN_TxMailbox0AbortCallback
+     /tmp/ccorA0ob.s:1037   .text.HAL_CAN_ErrorCallback:00000000 $t
+     /tmp/ccorA0ob.s:1042   .text.HAL_CAN_ErrorCallback:00000000 HAL_CAN_ErrorCallback
+     /tmp/ccorA0ob.s:1127   .text.HAL_CAN_ErrorCallback:0000006c $d
+     /tmp/ccorA0ob.s:1132   .text.HAL_CAN_RxFifo0MsgPendingCallback:00000000 $t
+     /tmp/ccorA0ob.s:1137   .text.HAL_CAN_RxFifo0MsgPendingCallback:00000000 HAL_CAN_RxFifo0MsgPendingCallback
+     /tmp/ccorA0ob.s:1158   .text.HAL_CAN_RxFifo1MsgPendingCallback:00000000 $t
+     /tmp/ccorA0ob.s:1163   .text.HAL_CAN_RxFifo1MsgPendingCallback:00000000 HAL_CAN_RxFifo1MsgPendingCallback
+     /tmp/ccorA0ob.s:1185   .bss.ppctllist:00000000 $d
+     /tmp/ccorA0ob.s:1189   .bss.ppctllist:00000000 ppctllist
+     /tmp/ccorA0ob.s:1192   .bss.pctllist:00000000 $d
+     /tmp/ccorA0ob.s:1196   .bss.pctllist:00000000 pctllist
+                     .debug_frame:00000010 $d
+
+UNDEFINED SYMBOLS
+HAL_CAN_AddTxMessage
+vPortEnterCritical
+calloc
+vPortExitCritical
+xTaskGetCurrentTaskHandle
+HAL_CAN_AbortTxRequest
+HAL_CAN_GetRxMessage
+xTaskGenericNotifyFromISR
+debugTX1c

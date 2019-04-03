@@ -1,0 +1,118 @@
+ARM GAS  /tmp/ccuJ2EqG.s 			page 1
+
+
+   1              		.syntax unified
+   2              		.cpu cortex-m4
+   3              		.eabi_attribute 27, 1
+   4              		.eabi_attribute 28, 1
+   5              		.fpu fpv4-sp-d16
+   6              		.eabi_attribute 20, 1
+   7              		.eabi_attribute 21, 1
+   8              		.eabi_attribute 23, 3
+   9              		.eabi_attribute 24, 1
+  10              		.eabi_attribute 25, 1
+  11              		.eabi_attribute 26, 1
+  12              		.eabi_attribute 30, 1
+  13              		.eabi_attribute 34, 1
+  14              		.eabi_attribute 18, 4
+  15              		.thumb
+  16              		.syntax unified
+  17              		.file	"DMOCchecksum.c"
+  18              		.text
+  19              	.Ltext0:
+  20              		.cfi_sections	.debug_frame
+  21              		.section	.text.DMOCchecksum,"ax",%progbits
+  22              		.align	2
+  23              		.global	DMOCchecksum
+  24              		.thumb
+  25              		.thumb_func
+  27              	DMOCchecksum:
+  28              	.LFB0:
+  29              		.file 1 "Ourtasks/DMOCchecksum.c"
+   1:Ourtasks/DMOCchecksum.c **** /******************************************************************************
+   2:Ourtasks/DMOCchecksum.c **** * File Name          : DMOCchecksum.c
+   3:Ourtasks/DMOCchecksum.c **** * Date First Issued  : 03/05/2019
+   4:Ourtasks/DMOCchecksum.c **** * Description        : Compute DMOC checksum
+   5:Ourtasks/DMOCchecksum.c **** *******************************************************************************/
+   6:Ourtasks/DMOCchecksum.c **** #include "DMOCchecksum.h"
+   7:Ourtasks/DMOCchecksum.c **** 
+   8:Ourtasks/DMOCchecksum.c **** /* *************************************************************************
+   9:Ourtasks/DMOCchecksum.c ****  * uint8_t DMOCchecksum(struct CANRCVBUF* pcan);
+  10:Ourtasks/DMOCchecksum.c ****  *	@brief	: Compute CAN msg payload checksum for DMOC
+  11:Ourtasks/DMOCchecksum.c ****  * @param	: pcan = pointer to CAN msg to be sent 
+  12:Ourtasks/DMOCchecksum.c ****  * @return	: checksum
+  13:Ourtasks/DMOCchecksum.c ****  * *************************************************************************/
+  14:Ourtasks/DMOCchecksum.c **** uint8_t DMOCchecksum(struct CANRCVBUF* pcan)
+  15:Ourtasks/DMOCchecksum.c **** {
+  30              		.loc 1 15 0
+  31              		.cfi_startproc
+  32              		@ args = 0, pretend = 0, frame = 0
+  33              		@ frame_needed = 0, uses_anonymous_args = 0
+  34              		@ link register save eliminated.
+  35              	.LVL0:
+  16:Ourtasks/DMOCchecksum.c **** 	uint8_t i;
+  17:Ourtasks/DMOCchecksum.c **** 	uint8_t sum;
+  18:Ourtasks/DMOCchecksum.c **** 	
+  19:Ourtasks/DMOCchecksum.c **** 	/* Checksum is based on a right justified 11b address. */
+  20:Ourtasks/DMOCchecksum.c **** 	sum = (pcan->id >> 21);
+  36              		.loc 1 20 0
+  37 0000 0268     		ldr	r2, [r0]
+  38 0002 C2F34752 		ubfx	r2, r2, #21, #8
+ARM GAS  /tmp/ccuJ2EqG.s 			page 2
+
+
+  39              	.LVL1:
+  21:Ourtasks/DMOCchecksum.c **** 
+  22:Ourtasks/DMOCchecksum.c **** 	for (i = 0; i < pcan->dlc; i++)
+  40              		.loc 1 22 0
+  41 0006 0023     		movs	r3, #0
+  42 0008 05E0     		b	.L2
+  43              	.LVL2:
+  44              	.L3:
+  23:Ourtasks/DMOCchecksum.c **** 		sum += pcan->cd.uc[i];
+  45              		.loc 1 23 0 discriminator 3
+  46 000a C118     		adds	r1, r0, r3
+  47 000c 097A     		ldrb	r1, [r1, #8]	@ zero_extendqisi2
+  48 000e 0A44     		add	r2, r2, r1
+  49              	.LVL3:
+  50 0010 D2B2     		uxtb	r2, r2
+  51              	.LVL4:
+  22:Ourtasks/DMOCchecksum.c **** 		sum += pcan->cd.uc[i];
+  52              		.loc 1 22 0 discriminator 3
+  53 0012 0133     		adds	r3, r3, #1
+  54              	.LVL5:
+  55 0014 DBB2     		uxtb	r3, r3
+  56              	.LVL6:
+  57              	.L2:
+  22:Ourtasks/DMOCchecksum.c **** 		sum += pcan->cd.uc[i];
+  58              		.loc 1 22 0 is_stmt 0 discriminator 1
+  59 0016 4168     		ldr	r1, [r0, #4]
+  60 0018 8B42     		cmp	r3, r1
+  61 001a F6D3     		bcc	.L3
+  24:Ourtasks/DMOCchecksum.c **** 
+  25:Ourtasks/DMOCchecksum.c **** 	return ((int)256 - (sum + 3));
+  62              		.loc 1 25 0 is_stmt 1
+  63 001c C2F1FD00 		rsb	r0, r2, #253
+  64              	.LVL7:
+  26:Ourtasks/DMOCchecksum.c **** }
+  65              		.loc 1 26 0
+  66 0020 C0B2     		uxtb	r0, r0
+  67 0022 7047     		bx	lr
+  68              		.cfi_endproc
+  69              	.LFE0:
+  71              		.text
+  72              	.Letext0:
+  73              		.file 2 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/machine/_default_t
+  74              		.file 3 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/sys/_stdint.h"
+  75              		.file 4 "Ourwares/common_misc.h"
+  76              		.file 5 "Ourwares/common_can.h"
+ARM GAS  /tmp/ccuJ2EqG.s 			page 3
+
+
+DEFINED SYMBOLS
+                            *ABS*:00000000 DMOCchecksum.c
+     /tmp/ccuJ2EqG.s:22     .text.DMOCchecksum:00000000 $t
+     /tmp/ccuJ2EqG.s:27     .text.DMOCchecksum:00000000 DMOCchecksum
+                     .debug_frame:00000010 $d
+
+NO UNDEFINED SYMBOLS

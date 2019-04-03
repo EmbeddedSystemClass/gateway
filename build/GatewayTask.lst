@@ -1,0 +1,652 @@
+ARM GAS  /tmp/ccBdwEFh.s 			page 1
+
+
+   1              		.syntax unified
+   2              		.cpu cortex-m4
+   3              		.eabi_attribute 27, 1
+   4              		.eabi_attribute 28, 1
+   5              		.fpu fpv4-sp-d16
+   6              		.eabi_attribute 20, 1
+   7              		.eabi_attribute 21, 1
+   8              		.eabi_attribute 23, 3
+   9              		.eabi_attribute 24, 1
+  10              		.eabi_attribute 25, 1
+  11              		.eabi_attribute 26, 1
+  12              		.eabi_attribute 30, 1
+  13              		.eabi_attribute 34, 1
+  14              		.eabi_attribute 18, 4
+  15              		.thumb
+  16              		.syntax unified
+  17              		.file	"GatewayTask.c"
+  18              		.text
+  19              	.Ltext0:
+  20              		.cfi_sections	.debug_frame
+  21              		.section	.text.StartGatewayTask,"ax",%progbits
+  22              		.align	2
+  23              		.global	StartGatewayTask
+  24              		.thumb
+  25              		.thumb_func
+  27              	StartGatewayTask:
+  28              	.LFB130:
+  29              		.file 1 "Ourwares/GatewayTask.c"
+   1:Ourwares/GatewayTask.c **** /******************************************************************************
+   2:Ourwares/GatewayTask.c **** * File Name          : GatewayTask.c
+   3:Ourwares/GatewayTask.c **** * Date First Issued  : 02/25/2019
+   4:Ourwares/GatewayTask.c **** * Description        : PC<->gateway using usart2, notified by MailboxTask
+   5:Ourwares/GatewayTask.c **** *******************************************************************************/
+   6:Ourwares/GatewayTask.c **** /*
+   7:Ourwares/GatewayTask.c ****   02/26/2019
+   8:Ourwares/GatewayTask.c **** This task works in conjunction with 'MailboxTask'.  'MailboxTask' notifies this
+   9:Ourwares/GatewayTask.c **** task when a CAN module circular buffer has one or more CAN msgs.  This task directly
+  10:Ourwares/GatewayTask.c **** accesses the circular buffer via 'take' pointer.
+  11:Ourwares/GatewayTask.c **** 
+  12:Ourwares/GatewayTask.c **** The 'MailboxTask' is likely a high FreeRTOS priority task.  This task might run at
+  13:Ourwares/GatewayTask.c **** a lower priority since timing is not critical, however delays require that the 
+  14:Ourwares/GatewayTask.c **** circular buffer be large enough to avoid overrun since there is no protection for
+  15:Ourwares/GatewayTask.c **** buffer overflow (since CAN msgs are added to the circular buffer under interrupt).
+  16:Ourwares/GatewayTask.c **** 
+  17:Ourwares/GatewayTask.c **** This version only handles PC->CAN bus msgs for CAN1 module.  To mix CAN1 and CAN2
+  18:Ourwares/GatewayTask.c **** requires implementing the scheme of commandeering the low order bit(s) from the
+  19:Ourwares/GatewayTask.c **** sequence number byte.
+  20:Ourwares/GatewayTask.c **** 
+  21:Ourwares/GatewayTask.c **** CAN->PC direction CAN1 and CAN2 msgs are mixed together, except for the cases where
+  22:Ourwares/GatewayTask.c **** the CANIDs are identical such as DMOC msgs, in which case the CAN2 msgs are tagged 
+  23:Ourwares/GatewayTask.c **** as 29b address.
+  24:Ourwares/GatewayTask.c **** */
+  25:Ourwares/GatewayTask.c **** #include "FreeRTOS.h"
+  26:Ourwares/GatewayTask.c **** #include "task.h"
+  27:Ourwares/GatewayTask.c **** #include "stm32f4xx_hal.h"
+  28:Ourwares/GatewayTask.c **** #include "stm32f4xx_hal_can.h"
+  29:Ourwares/GatewayTask.c **** #include "GatewayTask.h"
+ARM GAS  /tmp/ccBdwEFh.s 			page 2
+
+
+  30:Ourwares/GatewayTask.c **** #include "can_iface.h"
+  31:Ourwares/GatewayTask.c **** #include "MailboxTask.h"
+  32:Ourwares/GatewayTask.c **** #include "getserialbuf.h"
+  33:Ourwares/GatewayTask.c **** #include "SerialTaskSend.h"
+  34:Ourwares/GatewayTask.c **** #include "morse.h"
+  35:Ourwares/GatewayTask.c **** #include "yprintf.h"
+  36:Ourwares/GatewayTask.c **** #include "SerialTaskReceive.h"
+  37:Ourwares/GatewayTask.c **** #include "gateway_PCtoCAN.h"
+  38:Ourwares/GatewayTask.c **** #include "gateway_CANtoPC.h"
+  39:Ourwares/GatewayTask.c **** 
+  40:Ourwares/GatewayTask.c **** extern UART_HandleTypeDef huart2;
+  41:Ourwares/GatewayTask.c **** extern UART_HandleTypeDef huart6;
+  42:Ourwares/GatewayTask.c **** 
+  43:Ourwares/GatewayTask.c **** extern struct CAN_CTLBLOCK* pctl1;	// Pointer to CAN1 control block
+  44:Ourwares/GatewayTask.c **** 
+  45:Ourwares/GatewayTask.c **** void StartGatewayTask(void const * argument);
+  46:Ourwares/GatewayTask.c **** 
+  47:Ourwares/GatewayTask.c **** osThreadId GatewayTaskHandle;
+  48:Ourwares/GatewayTask.c **** 
+  49:Ourwares/GatewayTask.c **** /* A notification to Gateway copies the internal notification word to this. */
+  50:Ourwares/GatewayTask.c **** uint32_t GatewayTask_noteval = 0;    // Receives notification word upon an API notify
+  51:Ourwares/GatewayTask.c **** 
+  52:Ourwares/GatewayTask.c **** /* *************************************************************************
+  53:Ourwares/GatewayTask.c ****  * osThreadId xGatewayTaskCreate(uint32_t taskpriority);
+  54:Ourwares/GatewayTask.c ****  * @brief	: Create task; task handle created is global for all to enjoy!
+  55:Ourwares/GatewayTask.c ****  * @param	: taskpriority = Task priority (just as it says!)
+  56:Ourwares/GatewayTask.c ****  * @return	: GatewayHandle
+  57:Ourwares/GatewayTask.c ****  * *************************************************************************/
+  58:Ourwares/GatewayTask.c **** osThreadId xGatewayTaskCreate(uint32_t taskpriority)
+  59:Ourwares/GatewayTask.c **** {
+  60:Ourwares/GatewayTask.c ****  /* definition and creation of CanTask */
+  61:Ourwares/GatewayTask.c ****   osThreadDef(GatewayTask, StartGatewayTask, osPriorityNormal, 0, 256);
+  62:Ourwares/GatewayTask.c ****   GatewayTaskHandle = osThreadCreate(osThread(GatewayTask), NULL);
+  63:Ourwares/GatewayTask.c **** 	vTaskPrioritySet( GatewayTaskHandle, taskpriority );
+  64:Ourwares/GatewayTask.c **** 
+  65:Ourwares/GatewayTask.c **** 	return GatewayTaskHandle;
+  66:Ourwares/GatewayTask.c **** }
+  67:Ourwares/GatewayTask.c **** /* *************************************************************************
+  68:Ourwares/GatewayTask.c ****  * void StartGatewayTask(void const * argument);
+  69:Ourwares/GatewayTask.c ****  *	@brief	: Task startup
+  70:Ourwares/GatewayTask.c ****  * *************************************************************************/
+  71:Ourwares/GatewayTask.c **** void StartGatewayTask(void const * argument)
+  72:Ourwares/GatewayTask.c **** {
+  30              		.loc 1 72 0
+  31              		.cfi_startproc
+  32              		@ args = 0, pretend = 0, frame = 56
+  33              		@ frame_needed = 0, uses_anonymous_args = 0
+  34              	.LVL0:
+  35 0000 2DE9F041 		push	{r4, r5, r6, r7, r8, lr}
+  36              	.LCFI0:
+  37              		.cfi_def_cfa_offset 24
+  38              		.cfi_offset 4, -24
+  39              		.cfi_offset 5, -20
+  40              		.cfi_offset 6, -16
+  41              		.cfi_offset 7, -12
+  42              		.cfi_offset 8, -8
+  43              		.cfi_offset 14, -4
+ARM GAS  /tmp/ccBdwEFh.s 			page 3
+
+
+  44 0004 92B0     		sub	sp, sp, #72
+  45              	.LCFI1:
+  46              		.cfi_def_cfa_offset 96
+  47              	.LVL1:
+  73:Ourwares/GatewayTask.c **** 
+  74:Ourwares/GatewayTask.c **** //while(1==1) osDelay(10);
+  75:Ourwares/GatewayTask.c **** 
+  76:Ourwares/GatewayTask.c **** 	int i;
+  77:Ourwares/GatewayTask.c **** 
+  78:Ourwares/GatewayTask.c **** 	/* The lower order bits are reserved for incoming CAN module msg notifications. */
+  79:Ourwares/GatewayTask.c **** 	#define TSKGATEWAYBITc1	(1 << (STM32MAXCANNUM + 1))  // Task notification bit for huart2 incoming 
+  80:Ourwares/GatewayTask.c **** 
+  81:Ourwares/GatewayTask.c **** 	/* notification bits processed after a 'Wait. */
+  82:Ourwares/GatewayTask.c **** 	uint32_t noteused = 0;
+  83:Ourwares/GatewayTask.c **** 
+  84:Ourwares/GatewayTask.c **** 	/* A notification copies the internal notification word to this. */
+  85:Ourwares/GatewayTask.c **** 	uint32_t noteval = 0;    // Receives notification word upon an API notify
+  48              		.loc 1 85 0
+  49 0006 0024     		movs	r4, #0
+  50 0008 1194     		str	r4, [sp, #68]
+  86:Ourwares/GatewayTask.c **** 
+  87:Ourwares/GatewayTask.c **** 	struct SERIALRCVBCB* prbcb2;	// usart2 (PC->CAN msgs)
+  88:Ourwares/GatewayTask.c **** 	struct CANRCVBUFPLUS* pcanp;  // Basic CAN msg Plus error and seq number
+  89:Ourwares/GatewayTask.c **** 	struct CANRCVBUFN* pncan;
+  90:Ourwares/GatewayTask.c **** 
+  91:Ourwares/GatewayTask.c **** 	/* PC-to-CAN msg */
+  92:Ourwares/GatewayTask.c **** 	struct CANTXQMSG testtx;
+  93:Ourwares/GatewayTask.c **** 	testtx.pctl = pctl1;
+  51              		.loc 1 93 0
+  52 000a 514B     		ldr	r3, .L17
+  53 000c 1B68     		ldr	r3, [r3]
+  54 000e 0893     		str	r3, [sp, #32]
+  94:Ourwares/GatewayTask.c **** 
+  95:Ourwares/GatewayTask.c **** 	/* Setup serial output buffers for uarts. */
+  96:Ourwares/GatewayTask.c **** 	struct SERIALSENDTASKBCB* pbuf2 = getserialbuf(&huart6,128);
+  55              		.loc 1 96 0
+  56 0010 8021     		movs	r1, #128
+  57 0012 5048     		ldr	r0, .L17+4
+  58              	.LVL2:
+  59 0014 FFF7FEFF 		bl	getserialbuf
+  60              	.LVL3:
+  61 0018 0790     		str	r0, [sp, #28]
+  97:Ourwares/GatewayTask.c **** 	struct SERIALSENDTASKBCB* pbuf3 = getserialbuf(&huart2,128);
+  62              		.loc 1 97 0
+  63 001a 4F4D     		ldr	r5, .L17+8
+  64 001c 8021     		movs	r1, #128
+  65 001e 2846     		mov	r0, r5
+  66 0020 FFF7FEFF 		bl	getserialbuf
+  67              	.LVL4:
+  68 0024 0690     		str	r0, [sp, #24]
+  98:Ourwares/GatewayTask.c **** 
+  99:Ourwares/GatewayTask.c **** 	/* Pointers into the CAN  msg circular buffer for each CAN module. */
+ 100:Ourwares/GatewayTask.c **** 	struct CANTAKEPTR* ptake[STM32MAXCANNUM] = {NULL};
+  69              		.loc 1 100 0
+  70 0026 0494     		str	r4, [sp, #16]
+  71 0028 0594     		str	r4, [sp, #20]
+ 101:Ourwares/GatewayTask.c **** 
+ARM GAS  /tmp/ccBdwEFh.s 			page 4
+
+
+ 102:Ourwares/GatewayTask.c **** 	/* Setup serial input buffering and line-ready notification */
+ 103:Ourwares/GatewayTask.c ****      //   (ptr uart handle, dma flag, notiification bit, 
+ 104:Ourwares/GatewayTask.c ****      //   ptr notification word, number line buffers, size of lines, 
+ 105:Ourwares/GatewayTask.c ****      //   dma buffer size);
+ 106:Ourwares/GatewayTask.c **** 	/* PC-to-CAN ascii/hex incoming "lines" directly converts to CAN msgs. */
+ 107:Ourwares/GatewayTask.c **** 	prbcb2 = xSerialTaskRxAdduart(&huart2,1,TSKGATEWAYBITc1,\
+  72              		.loc 1 107 0
+  73 002a 0121     		movs	r1, #1
+  74 002c 0391     		str	r1, [sp, #12]
+  75 002e 8023     		movs	r3, #128
+  76 0030 0293     		str	r3, [sp, #8]
+  77 0032 2023     		movs	r3, #32
+  78 0034 0193     		str	r3, [sp, #4]
+  79 0036 0C23     		movs	r3, #12
+  80 0038 0093     		str	r3, [sp]
+  81 003a 11AB     		add	r3, sp, #68
+  82 003c 0822     		movs	r2, #8
+  83 003e 2846     		mov	r0, r5
+  84 0040 FFF7FEFF 		bl	xSerialTaskRxAdduart
+  85              	.LVL5:
+ 108:Ourwares/GatewayTask.c **** 		&noteval,12,32,128,1); // buff 12 CAN, of 32 bytes, 192 total dma, /CAN mode
+ 109:Ourwares/GatewayTask.c **** 	if (prbcb2 == NULL) morse_trap(41);
+  86              		.loc 1 109 0
+  87 0044 8046     		mov	r8, r0
+  88 0046 10B9     		cbnz	r0, .L2
+  89              		.loc 1 109 0 is_stmt 0 discriminator 1
+  90 0048 2920     		movs	r0, #41
+  91              	.LVL6:
+  92 004a FFF7FEFF 		bl	morse_trap
+  93              	.LVL7:
+  94              	.L2:
+  72:Ourwares/GatewayTask.c **** 
+  95              		.loc 1 72 0 is_stmt 1 discriminator 1
+  96 004e 0024     		movs	r4, #0
+  97 0050 14E0     		b	.L3
+  98              	.LVL8:
+  99              	.L5:
+ 110:Ourwares/GatewayTask.c **** 
+ 111:Ourwares/GatewayTask.c **** 	/* Get pointers to circular buffer pointers for each CAN module in list. */	
+ 112:Ourwares/GatewayTask.c **** 	for (i = 0; i < STM32MAXCANNUM; i++)
+ 113:Ourwares/GatewayTask.c **** 	{
+ 114:Ourwares/GatewayTask.c **** 		if ((mbxcannum[i].pmbxarray != NULL) && (mbxcannum[i].pctl != NULL))
+ 100              		.loc 1 114 0
+ 101 0052 04EB8402 		add	r2, r4, r4, lsl #2
+ 102 0056 9300     		lsls	r3, r2, #2
+ 103 0058 404A     		ldr	r2, .L17+12
+ 104 005a 1344     		add	r3, r3, r2
+ 105 005c 5B68     		ldr	r3, [r3, #4]
+ 106 005e 63B1     		cbz	r3, .L4
+ 107              		.loc 1 114 0 is_stmt 0 discriminator 1
+ 108 0060 04EB8402 		add	r2, r4, r4, lsl #2
+ 109 0064 9300     		lsls	r3, r2, #2
+ 110 0066 3D4A     		ldr	r2, .L17+12
+ 111 0068 D058     		ldr	r0, [r2, r3]
+ 112 006a 30B1     		cbz	r0, .L4
+ 115:Ourwares/GatewayTask.c **** 		{
+ 116:Ourwares/GatewayTask.c **** 			ptake[i] = can_iface_add_take(mbxcannum[i].pctl);
+ARM GAS  /tmp/ccBdwEFh.s 			page 5
+
+
+ 113              		.loc 1 116 0 is_stmt 1
+ 114 006c FFF7FEFF 		bl	can_iface_add_take
+ 115              	.LVL9:
+ 116 0070 12AB     		add	r3, sp, #72
+ 117 0072 03EB8403 		add	r3, r3, r4, lsl #2
+ 118 0076 43F8380C 		str	r0, [r3, #-56]
+ 119              	.L4:
+ 112:Ourwares/GatewayTask.c **** 	{
+ 120              		.loc 1 112 0 discriminator 2
+ 121 007a 0134     		adds	r4, r4, #1
+ 122              	.LVL10:
+ 123              	.L3:
+ 112:Ourwares/GatewayTask.c **** 	{
+ 124              		.loc 1 112 0 is_stmt 0 discriminator 1
+ 125 007c 012C     		cmp	r4, #1
+ 126 007e E8DD     		ble	.L5
+ 127 0080 0027     		movs	r7, #0
+ 128              	.LVL11:
+ 129              	.L11:
+ 117:Ourwares/GatewayTask.c **** 		}
+ 118:Ourwares/GatewayTask.c **** 	}
+ 119:Ourwares/GatewayTask.c **** 
+ 120:Ourwares/GatewayTask.c ****   /* Infinite RTOS Task loop */
+ 121:Ourwares/GatewayTask.c ****   for(;;)
+ 122:Ourwares/GatewayTask.c ****   {
+ 123:Ourwares/GatewayTask.c **** 		/* Wait for either PC line completion, or 'MailboxTask' notifications. */
+ 124:Ourwares/GatewayTask.c **** 		xTaskNotifyWait(noteused, 0, &GatewayTask_noteval, portMAX_DELAY);
+ 130              		.loc 1 124 0 is_stmt 1
+ 131 0082 4FF0FF33 		mov	r3, #-1
+ 132 0086 364A     		ldr	r2, .L17+16
+ 133 0088 0021     		movs	r1, #0
+ 134 008a 3846     		mov	r0, r7
+ 135 008c FFF7FEFF 		bl	xTaskNotifyWait
+ 136              	.LVL12:
+ 125:Ourwares/GatewayTask.c **** 		noteused = 0;	// Accumulate bits in 'noteval' processed.
+ 137              		.loc 1 125 0
+ 138 0090 0027     		movs	r7, #0
+ 126:Ourwares/GatewayTask.c **** 
+ 127:Ourwares/GatewayTask.c **** 		/* CAN->PC: Check notification bit for each CAN module */
+ 128:Ourwares/GatewayTask.c **** 		for (i = 0; i < STM32MAXCANNUM; i++)
+ 139              		.loc 1 128 0
+ 140 0092 3E46     		mov	r6, r7
+ 141 0094 23E0     		b	.L6
+ 142              	.LVL13:
+ 143              	.L10:
+ 129:Ourwares/GatewayTask.c **** 		{
+ 130:Ourwares/GatewayTask.c **** 			if ((GatewayTask_noteval & (1 << i)) != 0)
+ 144              		.loc 1 130 0
+ 145 0096 0123     		movs	r3, #1
+ 146 0098 B340     		lsls	r3, r3, r6
+ 147 009a 314A     		ldr	r2, .L17+16
+ 148 009c 1268     		ldr	r2, [r2]
+ 149 009e 1340     		ands	r3, r3, r2
+ 150 00a0 1CD0     		beq	.L7
+ 131:Ourwares/GatewayTask.c **** 			{
+ 132:Ourwares/GatewayTask.c **** 				noteused |= (GatewayTask_noteval & (1 << i)); // We handled the bit
+ 151              		.loc 1 132 0
+ARM GAS  /tmp/ccBdwEFh.s 			page 6
+
+
+ 152 00a2 1F43     		orrs	r7, r7, r3
+ 153              	.LVL14:
+ 154              	.L9:
+ 133:Ourwares/GatewayTask.c **** 				
+ 134:Ourwares/GatewayTask.c **** 				do
+ 135:Ourwares/GatewayTask.c **** 				{
+ 136:Ourwares/GatewayTask.c **** 					/* Get pointer into CAN msg circular buffer */
+ 137:Ourwares/GatewayTask.c **** 					pncan = can_iface_get_CANmsg(ptake[i]);
+ 155              		.loc 1 137 0
+ 156 00a4 12AB     		add	r3, sp, #72
+ 157 00a6 03EB8603 		add	r3, r3, r6, lsl #2
+ 158 00aa 53F8380C 		ldr	r0, [r3, #-56]
+ 159 00ae FFF7FEFF 		bl	can_iface_get_CANmsg
+ 160              	.LVL15:
+ 138:Ourwares/GatewayTask.c **** 					if (pncan != NULL)
+ 161              		.loc 1 138 0
+ 162 00b2 0546     		mov	r5, r0
+ 163 00b4 80B1     		cbz	r0, .L8
+ 139:Ourwares/GatewayTask.c **** 					{						
+ 140:Ourwares/GatewayTask.c **** 						/* Convert binary to the ascii/hex format for PC. */
+ 141:Ourwares/GatewayTask.c **** 						xSemaphoreTake(pbuf3->semaphore, 5000);
+ 164              		.loc 1 141 0
+ 165 00b6 12AC     		add	r4, sp, #72
+ 166 00b8 54F8300D 		ldr	r0, [r4, #-48]!
+ 167              	.LVL16:
+ 168 00bc 0023     		movs	r3, #0
+ 169 00be 41F28832 		movw	r2, #5000
+ 170 00c2 1946     		mov	r1, r3
+ 171 00c4 8068     		ldr	r0, [r0, #8]
+ 172 00c6 FFF7FEFF 		bl	xQueueGenericReceive
+ 173              	.LVL17:
+ 142:Ourwares/GatewayTask.c **** 						gateway_CANtoPC(&pbuf3, &pncan->can);
+ 174              		.loc 1 142 0
+ 175 00ca 2946     		mov	r1, r5
+ 176 00cc 2046     		mov	r0, r4
+ 177 00ce FFF7FEFF 		bl	gateway_CANtoPC
+ 178              	.LVL18:
+ 143:Ourwares/GatewayTask.c **** 						vSerialTaskSendQueueBuf(&pbuf3); // Place on queue for usart2 sending
+ 179              		.loc 1 143 0
+ 180 00d2 2046     		mov	r0, r4
+ 181 00d4 FFF7FEFF 		bl	vSerialTaskSendQueueBuf
+ 182              	.LVL19:
+ 183              	.L8:
+ 144:Ourwares/GatewayTask.c **** 					}
+ 145:Ourwares/GatewayTask.c **** 				} while (pncan != NULL);	// Drain the buffer
+ 184              		.loc 1 145 0
+ 185 00d8 002D     		cmp	r5, #0
+ 186 00da E3D1     		bne	.L9
+ 187              	.LVL20:
+ 188              	.L7:
+ 128:Ourwares/GatewayTask.c **** 		{
+ 189              		.loc 1 128 0 discriminator 2
+ 190 00dc 0136     		adds	r6, r6, #1
+ 191              	.LVL21:
+ 192              	.L6:
+ 128:Ourwares/GatewayTask.c **** 		{
+ 193              		.loc 1 128 0 is_stmt 0 discriminator 1
+ARM GAS  /tmp/ccBdwEFh.s 			page 7
+
+
+ 194 00de 012E     		cmp	r6, #1
+ 195 00e0 D9DD     		ble	.L10
+ 146:Ourwares/GatewayTask.c **** 			}
+ 147:Ourwares/GatewayTask.c **** 		}
+ 148:Ourwares/GatewayTask.c **** 
+ 149:Ourwares/GatewayTask.c **** 		/* PC->CAN: Handle incoming usart2 carrying ascii/hex CAN msgs */
+ 150:Ourwares/GatewayTask.c **** 		if ((GatewayTask_noteval & TSKGATEWAYBITc1) != 0)
+ 196              		.loc 1 150 0 is_stmt 1
+ 197 00e2 1F4B     		ldr	r3, .L17+16
+ 198 00e4 1B68     		ldr	r3, [r3]
+ 199 00e6 13F0080F 		tst	r3, #8
+ 200 00ea CAD0     		beq	.L11
+ 151:Ourwares/GatewayTask.c **** 		{ // Here, one or more CAN msgs have been received
+ 152:Ourwares/GatewayTask.c **** 			noteused |= TSKGATEWAYBITc1; // We handled the bit
+ 201              		.loc 1 152 0
+ 202 00ec 47F00807 		orr	r7, r7, #8
+ 203              	.LVL22:
+ 204              	.L14:
+ 153:Ourwares/GatewayTask.c **** 
+ 154:Ourwares/GatewayTask.c **** 			/* Get incoming CAN msgs from PC and queue for output to CAN bus. */
+ 155:Ourwares/GatewayTask.c **** 			do
+ 156:Ourwares/GatewayTask.c **** 			{
+ 157:Ourwares/GatewayTask.c **** 				pcanp = gateway_PCtoCAN_getCAN(prbcb2);
+ 205              		.loc 1 157 0
+ 206 00f0 4046     		mov	r0, r8
+ 207 00f2 FFF7FEFF 		bl	gateway_PCtoCAN_getCAN
+ 208              	.LVL23:
+ 158:Ourwares/GatewayTask.c **** 				if (pcanp != NULL)
+ 209              		.loc 1 158 0
+ 210 00f6 0446     		mov	r4, r0
+ 211 00f8 30B3     		cbz	r0, .L12
+ 159:Ourwares/GatewayTask.c **** 				{
+ 160:Ourwares/GatewayTask.c **** 					/* Check for errors */
+ 161:Ourwares/GatewayTask.c **** 					if (pcanp->error == 0)
+ 212              		.loc 1 161 0
+ 213 00fa 037C     		ldrb	r3, [r0, #16]	@ zero_extendqisi2
+ 214 00fc 63B9     		cbnz	r3, .L13
+ 162:Ourwares/GatewayTask.c **** 					{
+ 163:Ourwares/GatewayTask.c **** 						/* Place CAN msg on queue for sending to CAN bus */
+ 164:Ourwares/GatewayTask.c **** 						testtx.can = pcanp->can;
+ 215              		.loc 1 164 0
+ 216 00fe 0AAD     		add	r5, sp, #40
+ 217 0100 0FC8     		ldmia	r0, {r0, r1, r2, r3}
+ 218              	.LVL24:
+ 219 0102 85E80F00 		stmia	r5, {r0, r1, r2, r3}
+ 165:Ourwares/GatewayTask.c **** 						xQueueSendToBack(CanTxQHandle,&testtx,portMAX_DELAY);
+ 220              		.loc 1 165 0
+ 221 0106 0023     		movs	r3, #0
+ 222 0108 4FF0FF32 		mov	r2, #-1
+ 223 010c 08A9     		add	r1, sp, #32
+ 224 010e 1548     		ldr	r0, .L17+20
+ 225 0110 0068     		ldr	r0, [r0]
+ 226 0112 FFF7FEFF 		bl	xQueueGenericSend
+ 227              	.LVL25:
+ 228 0116 17E0     		b	.L12
+ 229              	.LVL26:
+ 230              	.L13:
+ARM GAS  /tmp/ccBdwEFh.s 			page 8
+
+
+ 166:Ourwares/GatewayTask.c **** 					}
+ 167:Ourwares/GatewayTask.c **** 					else
+ 168:Ourwares/GatewayTask.c **** 					{ // Here, one or more errors. List for the hapless Op to ponder
+ 169:Ourwares/GatewayTask.c **** 						yprintf(&pbuf2,"\n\r@@@@@ PC CAN ERROR: %i 0X%04X, 0X%08X 0X%02X 0X%08X %i 0X%02X 0X%02X %s",
+ 231              		.loc 1 169 0
+ 232 0118 427C     		ldrb	r2, [r0, #17]	@ zero_extendqisi2
+ 233 011a 8168     		ldr	r1, [r0, #8]
+ 234 011c 0291     		str	r1, [sp, #8]
+ 235 011e 4168     		ldr	r1, [r0, #4]
+ 236 0120 0191     		str	r1, [sp, #4]
+ 237 0122 0168     		ldr	r1, [r0]
+ 238 0124 0091     		str	r1, [sp]
+ 239 0126 1049     		ldr	r1, .L17+24
+ 240 0128 07A8     		add	r0, sp, #28
+ 241              	.LVL27:
+ 242 012a FFF7FEFF 		bl	yprintf
+ 243              	.LVL28:
+ 170:Ourwares/GatewayTask.c **** 							pcanp->can.id,pcanp->can.dlc,pcanp->can.cd.ui[0]);
+ 171:Ourwares/GatewayTask.c **** 
+ 172:Ourwares/GatewayTask.c **** 						/* For test purposes: Place CAN msg on queue for sending to CAN bus */
+ 173:Ourwares/GatewayTask.c **** 						testtx.can = pcanp->can;
+ 244              		.loc 1 173 0
+ 245 012e 0AAD     		add	r5, sp, #40
+ 246 0130 94E80F00 		ldmia	r4, {r0, r1, r2, r3}
+ 247 0134 85E80F00 		stmia	r5, {r0, r1, r2, r3}
+ 174:Ourwares/GatewayTask.c **** 						xQueueSendToBack(CanTxQHandle,&testtx,portMAX_DELAY);
+ 248              		.loc 1 174 0
+ 249 0138 0023     		movs	r3, #0
+ 250 013a 4FF0FF32 		mov	r2, #-1
+ 251 013e 08A9     		add	r1, sp, #32
+ 252 0140 0848     		ldr	r0, .L17+20
+ 253 0142 0068     		ldr	r0, [r0]
+ 254 0144 FFF7FEFF 		bl	xQueueGenericSend
+ 255              	.LVL29:
+ 256              	.L12:
+ 175:Ourwares/GatewayTask.c **** 					}
+ 176:Ourwares/GatewayTask.c **** 				}
+ 177:Ourwares/GatewayTask.c **** 			} while ( pcanp != NULL);
+ 257              		.loc 1 177 0
+ 258 0148 002C     		cmp	r4, #0
+ 259 014a D1D1     		bne	.L14
+ 260 014c 99E7     		b	.L11
+ 261              	.L18:
+ 262 014e 00BF     		.align	2
+ 263              	.L17:
+ 264 0150 00000000 		.word	pctl1
+ 265 0154 00000000 		.word	huart6
+ 266 0158 00000000 		.word	huart2
+ 267 015c 00000000 		.word	mbxcannum
+ 268 0160 00000000 		.word	.LANCHOR0
+ 269 0164 00000000 		.word	CanTxQHandle
+ 270 0168 00000000 		.word	.LC2
+ 271              		.cfi_endproc
+ 272              	.LFE130:
+ 274              		.section	.text.xGatewayTaskCreate,"ax",%progbits
+ 275              		.align	2
+ 276              		.global	xGatewayTaskCreate
+ARM GAS  /tmp/ccBdwEFh.s 			page 9
+
+
+ 277              		.thumb
+ 278              		.thumb_func
+ 280              	xGatewayTaskCreate:
+ 281              	.LFB129:
+  59:Ourwares/GatewayTask.c ****  /* definition and creation of CanTask */
+ 282              		.loc 1 59 0
+ 283              		.cfi_startproc
+ 284              		@ args = 0, pretend = 0, frame = 32
+ 285              		@ frame_needed = 0, uses_anonymous_args = 0
+ 286              	.LVL30:
+ 287 0000 70B5     		push	{r4, r5, r6, lr}
+ 288              	.LCFI2:
+ 289              		.cfi_def_cfa_offset 16
+ 290              		.cfi_offset 4, -16
+ 291              		.cfi_offset 5, -12
+ 292              		.cfi_offset 6, -8
+ 293              		.cfi_offset 14, -4
+ 294 0002 88B0     		sub	sp, sp, #32
+ 295              	.LCFI3:
+ 296              		.cfi_def_cfa_offset 48
+ 297 0004 0646     		mov	r6, r0
+  61:Ourwares/GatewayTask.c ****   GatewayTaskHandle = osThreadCreate(osThread(GatewayTask), NULL);
+ 298              		.loc 1 61 0
+ 299 0006 01AC     		add	r4, sp, #4
+ 300 0008 094D     		ldr	r5, .L21
+ 301 000a 0FCD     		ldmia	r5!, {r0, r1, r2, r3}
+ 302              	.LVL31:
+ 303 000c 0FC4     		stmia	r4!, {r0, r1, r2, r3}
+ 304 000e 95E80700 		ldmia	r5, {r0, r1, r2}
+ 305 0012 84E80700 		stmia	r4, {r0, r1, r2}
+  62:Ourwares/GatewayTask.c **** 	vTaskPrioritySet( GatewayTaskHandle, taskpriority );
+ 306              		.loc 1 62 0
+ 307 0016 0021     		movs	r1, #0
+ 308 0018 01A8     		add	r0, sp, #4
+ 309 001a FFF7FEFF 		bl	osThreadCreate
+ 310              	.LVL32:
+ 311 001e 054C     		ldr	r4, .L21+4
+ 312 0020 2060     		str	r0, [r4]
+  63:Ourwares/GatewayTask.c **** 
+ 313              		.loc 1 63 0
+ 314 0022 3146     		mov	r1, r6
+ 315 0024 FFF7FEFF 		bl	vTaskPrioritySet
+ 316              	.LVL33:
+  66:Ourwares/GatewayTask.c **** /* *************************************************************************
+ 317              		.loc 1 66 0
+ 318 0028 2068     		ldr	r0, [r4]
+ 319 002a 08B0     		add	sp, sp, #32
+ 320              	.LCFI4:
+ 321              		.cfi_def_cfa_offset 16
+ 322              		@ sp needed
+ 323 002c 70BD     		pop	{r4, r5, r6, pc}
+ 324              	.LVL34:
+ 325              	.L22:
+ 326 002e 00BF     		.align	2
+ 327              	.L21:
+ 328 0030 00000000 		.word	.LANCHOR1
+ 329 0034 00000000 		.word	GatewayTaskHandle
+ARM GAS  /tmp/ccBdwEFh.s 			page 10
+
+
+ 330              		.cfi_endproc
+ 331              	.LFE129:
+ 333              		.global	GatewayTask_noteval
+ 334              		.comm	GatewayTaskHandle,4,4
+ 335              		.section	.rodata
+ 336              		.align	2
+ 337              		.set	.LANCHOR1,. + 0
+ 338              	.LC3:
+ 339 0000 4C000000 		.word	.LC0
+ 340 0004 00000000 		.word	StartGatewayTask
+ 341 0008 0000     		.short	0
+ 342 000a 0000     		.space	2
+ 343 000c 00000000 		.word	0
+ 344 0010 00010000 		.word	256
+ 345 0014 00000000 		.word	0
+ 346 0018 00000000 		.word	0
+ 347              		.section	.bss.GatewayTask_noteval,"aw",%nobits
+ 348              		.align	2
+ 349              		.set	.LANCHOR0,. + 0
+ 352              	GatewayTask_noteval:
+ 353 0000 00000000 		.space	4
+ 354              		.section	.rodata.str1.4,"aMS",%progbits,1
+ 355              		.align	2
+ 356              	.LC2:
+ 357 0000 0A0D4040 		.ascii	"\012\015@@@@@ PC CAN ERROR: %i 0X%04X, 0X%08X 0X%02"
+ 357      40404020 
+ 357      50432043 
+ 357      414E2045 
+ 357      52524F52 
+ 358 002d 58203058 		.ascii	"X 0X%08X %i 0X%02X 0X%02X %s\000"
+ 358      25303858 
+ 358      20256920 
+ 358      30582530 
+ 358      32582030 
+ 359 004a 0000     		.space	2
+ 360              	.LC0:
+ 361 004c 47617465 		.ascii	"GatewayTask\000"
+ 361      77617954 
+ 361      61736B00 
+ 362              		.text
+ 363              	.Letext0:
+ 364              		.file 2 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/machine/_default_t
+ 365              		.file 3 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/sys/_stdint.h"
+ 366              		.file 4 "Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/portmacro.h"
+ 367              		.file 5 "Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h"
+ 368              		.file 6 "Middlewares/Third_Party/FreeRTOS/Source/include/task.h"
+ 369              		.file 7 "Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f407xx.h"
+ 370              		.file 8 "Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f4xx.h"
+ 371              		.file 9 "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_def.h"
+ 372              		.file 10 "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_dma.h"
+ 373              		.file 11 "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_can.h"
+ 374              		.file 12 "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_uart.h"
+ 375              		.file 13 "Middlewares/Third_Party/FreeRTOS/Source/include/queue.h"
+ 376              		.file 14 "Middlewares/Third_Party/FreeRTOS/Source/include/semphr.h"
+ 377              		.file 15 "Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS/cmsis_os.h"
+ 378              		.file 16 "Ourwares/common_misc.h"
+ 379              		.file 17 "Ourwares/common_can.h"
+ARM GAS  /tmp/ccBdwEFh.s 			page 11
+
+
+ 380              		.file 18 "Ourwares/CanTask.h"
+ 381              		.file 19 "Ourwares/can_iface.h"
+ 382              		.file 20 "Ourwares/MailboxTask.h"
+ 383              		.file 21 "Ourwares/SerialTaskSend.h"
+ 384              		.file 22 "Ourwares/SerialTaskReceive.h"
+ 385              		.file 23 "Drivers/CMSIS/Include/core_cm4.h"
+ 386              		.file 24 "Ourwares/getserialbuf.h"
+ 387              		.file 25 "Ourwares/morse.h"
+ 388              		.file 26 "Ourwares/gateway_CANtoPC.h"
+ 389              		.file 27 "Ourwares/gateway_PCtoCAN.h"
+ 390              		.file 28 "Ourwares/yprintf.h"
+ARM GAS  /tmp/ccBdwEFh.s 			page 12
+
+
+DEFINED SYMBOLS
+                            *ABS*:00000000 GatewayTask.c
+     /tmp/ccBdwEFh.s:22     .text.StartGatewayTask:00000000 $t
+     /tmp/ccBdwEFh.s:27     .text.StartGatewayTask:00000000 StartGatewayTask
+     /tmp/ccBdwEFh.s:264    .text.StartGatewayTask:00000150 $d
+     /tmp/ccBdwEFh.s:275    .text.xGatewayTaskCreate:00000000 $t
+     /tmp/ccBdwEFh.s:280    .text.xGatewayTaskCreate:00000000 xGatewayTaskCreate
+     /tmp/ccBdwEFh.s:328    .text.xGatewayTaskCreate:00000030 $d
+                            *COM*:00000004 GatewayTaskHandle
+     /tmp/ccBdwEFh.s:352    .bss.GatewayTask_noteval:00000000 GatewayTask_noteval
+     /tmp/ccBdwEFh.s:336    .rodata:00000000 $d
+     /tmp/ccBdwEFh.s:348    .bss.GatewayTask_noteval:00000000 $d
+     /tmp/ccBdwEFh.s:355    .rodata.str1.4:00000000 $d
+                     .debug_frame:00000010 $d
+
+UNDEFINED SYMBOLS
+getserialbuf
+xSerialTaskRxAdduart
+morse_trap
+can_iface_add_take
+xTaskNotifyWait
+can_iface_get_CANmsg
+xQueueGenericReceive
+gateway_CANtoPC
+vSerialTaskSendQueueBuf
+gateway_PCtoCAN_getCAN
+xQueueGenericSend
+yprintf
+pctl1
+huart6
+huart2
+mbxcannum
+CanTxQHandle
+osThreadCreate
+vTaskPrioritySet

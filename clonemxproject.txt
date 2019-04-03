@@ -1,0 +1,37 @@
+clonemxproject.txt
+
+Cloning MX project steps
+
+1.  Make directory for new MX project
+ cd ~/GliderWinchItems
+mkdir newclone
+cd newclone
+
+2. When in newclone directory copy files from project to be cloned
+
+   ls ../oldproject
+   cp -rua ../oldproject/* .
+
+3.  Update names
+
+   a.  'mm' script
+
+       Change name--
+       ./script-all <newclone>
+
+   b. '.ioc' MX project file
+
+     1) copy <oldproject>.ioc <newclone>.ioc
+
+     2) edit <newclone>.ioc  
+
+     Search <oldproject> and change name, e.g.--
+       ProjectManager.ProjectFileName=dynamometer.ioc
+       ProjectManager.ProjectName=dynamometer
+
+c.  Makefile
+
+    Change name (near beginning), e.g.--
+      TARGET = dynamometer
+
+

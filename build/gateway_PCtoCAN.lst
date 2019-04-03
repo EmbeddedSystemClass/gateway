@@ -1,0 +1,1140 @@
+ARM GAS  /tmp/cc1OSpyy.s 			page 1
+
+
+   1              		.syntax unified
+   2              		.cpu cortex-m4
+   3              		.eabi_attribute 27, 1
+   4              		.eabi_attribute 28, 1
+   5              		.fpu fpv4-sp-d16
+   6              		.eabi_attribute 20, 1
+   7              		.eabi_attribute 21, 1
+   8              		.eabi_attribute 23, 3
+   9              		.eabi_attribute 24, 1
+  10              		.eabi_attribute 25, 1
+  11              		.eabi_attribute 26, 1
+  12              		.eabi_attribute 30, 1
+  13              		.eabi_attribute 34, 1
+  14              		.eabi_attribute 18, 4
+  15              		.thumb
+  16              		.syntax unified
+  17              		.file	"gateway_PCtoCAN.c"
+  18              		.text
+  19              	.Ltext0:
+  20              		.cfi_sections	.debug_frame
+  21              		.section	.text.new_init,"ax",%progbits
+  22              		.align	2
+  23              		.thumb
+  24              		.thumb_func
+  26              	new_init:
+  27              	.LFB129:
+  28              		.file 1 "Ourwares/gateway_PCtoCAN.c"
+   1:Ourwares/gateway_PCtoCAN.c **** /******************************************************************************
+   2:Ourwares/gateway_PCtoCAN.c **** * File Name          : gateway_PCtoCAN.c
+   3:Ourwares/gateway_PCtoCAN.c **** * Date First Issued  : 02/10/2019
+   4:Ourwares/gateway_PCtoCAN.c **** * Description        : Convert incoming PC ascii/hex CAN msgs to binary CAN format
+   5:Ourwares/gateway_PCtoCAN.c **** *******************************************************************************/
+   6:Ourwares/gateway_PCtoCAN.c **** #include "FreeRTOS.h"
+   7:Ourwares/gateway_PCtoCAN.c **** #include "task.h"
+   8:Ourwares/gateway_PCtoCAN.c **** #include "gateway_PCtoCAN.h"
+   9:Ourwares/gateway_PCtoCAN.c **** #include "malloc.h"
+  10:Ourwares/gateway_PCtoCAN.c **** 
+  11:Ourwares/gateway_PCtoCAN.c **** /*
+  12:Ourwares/gateway_PCtoCAN.c **** struct GATEWAYPCTOCAN
+  13:Ourwares/gateway_PCtoCAN.c **** {
+  14:Ourwares/gateway_PCtoCAN.c **** 	struct CANRCVBUF*	pcan; // Ptr into buffer for received CAN msg
+  15:Ourwares/gateway_PCtoCAN.c **** 	uint32_t chksumx;       // Checksum in progress
+  16:Ourwares/gateway_PCtoCAN.c **** 	uint8_t binseq;         // Received sequence number (binary)
+  17:Ourwares/gateway_PCtoCAN.c **** 	uint8_t ctrseq;			// Software maintained sequence number
+  18:Ourwares/gateway_PCtoCAN.c **** 	uint8_t state;          // State of decoding
+  19:Ourwares/gateway_PCtoCAN.c **** 	uint8_t error;          // Error code: 0 = no errors
+  20:Ourwares/gateway_PCtoCAN.c **** 	uint8_t bin;            // Bin byte in progress
+  21:Ourwares/gateway_PCtoCAN.c **** 	uint8_t odd;            // Nibble: Odd = 1, even = 0;
+  22:Ourwares/gateway_PCtoCAN.c **** 	uint8_t ctr;            // Data storing counter
+  23:Ourwares/gateway_PCtoCAN.c **** };
+  24:Ourwares/gateway_PCtoCAN.c **** */
+  25:Ourwares/gateway_PCtoCAN.c **** 
+  26:Ourwares/gateway_PCtoCAN.c **** static void new_init(struct GATEWAYPCTOCAN* p)
+  27:Ourwares/gateway_PCtoCAN.c **** {
+  29              		.loc 1 27 0
+  30              		.cfi_startproc
+  31              		@ args = 0, pretend = 0, frame = 0
+ARM GAS  /tmp/cc1OSpyy.s 			page 2
+
+
+  32              		@ frame_needed = 0, uses_anonymous_args = 0
+  33              		@ link register save eliminated.
+  34              	.LVL0:
+  28:Ourwares/gateway_PCtoCAN.c **** 	/* Initialize for new CAN msg construction */
+  29:Ourwares/gateway_PCtoCAN.c **** 	p->state   = 0;
+  35              		.loc 1 29 0
+  36 0000 0023     		movs	r3, #0
+  37 0002 8372     		strb	r3, [r0, #10]
+  30:Ourwares/gateway_PCtoCAN.c **** 	p->error   = 0;
+  38              		.loc 1 30 0
+  39 0004 C372     		strb	r3, [r0, #11]
+  31:Ourwares/gateway_PCtoCAN.c **** 	p->ctr     = 0;
+  40              		.loc 1 31 0
+  41 0006 8373     		strb	r3, [r0, #14]
+  32:Ourwares/gateway_PCtoCAN.c **** 	p->odd     = 1;
+  42              		.loc 1 32 0
+  43 0008 0123     		movs	r3, #1
+  44 000a 4373     		strb	r3, [r0, #13]
+  33:Ourwares/gateway_PCtoCAN.c **** 	p->chksumx = CHECKSUM_INITIAL;	// Checksum initial value
+  45              		.loc 1 33 0
+  46 000c 4AF2A553 		movw	r3, #42405
+  47 0010 4360     		str	r3, [r0, #4]
+  48 0012 7047     		bx	lr
+  49              		.cfi_endproc
+  50              	.LFE129:
+  52              		.section	.text.gateway_PCtoCAN_init,"ax",%progbits
+  53              		.align	2
+  54              		.global	gateway_PCtoCAN_init
+  55              		.thumb
+  56              		.thumb_func
+  58              	gateway_PCtoCAN_init:
+  59              	.LFB130:
+  34:Ourwares/gateway_PCtoCAN.c **** 	return;
+  35:Ourwares/gateway_PCtoCAN.c **** }
+  36:Ourwares/gateway_PCtoCAN.c **** /* **************************************************************************************
+  37:Ourwares/gateway_PCtoCAN.c ****  * struct GATEWAYPCTOCAN* gateway_PCtoCAN_init(struct SERIALRCVBCB* prbcb);
+  38:Ourwares/gateway_PCtoCAN.c ****  * @brief	: Get decode block calloc'd and initialized
+  39:Ourwares/gateway_PCtoCAN.c ****  * @param	: 
+  40:Ourwares/gateway_PCtoCAN.c ****  * @return	: pointer: NULL = failed.
+  41:Ourwares/gateway_PCtoCAN.c ****  * ************************************************************************************** */
+  42:Ourwares/gateway_PCtoCAN.c **** struct GATEWAYPCTOCAN* gateway_PCtoCAN_init(struct SERIALRCVBCB* prbcb)
+  43:Ourwares/gateway_PCtoCAN.c **** {
+  60              		.loc 1 43 0
+  61              		.cfi_startproc
+  62              		@ args = 0, pretend = 0, frame = 0
+  63              		@ frame_needed = 0, uses_anonymous_args = 0
+  64              	.LVL1:
+  65 0000 38B5     		push	{r3, r4, r5, lr}
+  66              	.LCFI0:
+  67              		.cfi_def_cfa_offset 16
+  68              		.cfi_offset 3, -16
+  69              		.cfi_offset 4, -12
+  70              		.cfi_offset 5, -8
+  71              		.cfi_offset 14, -4
+  72 0002 0546     		mov	r5, r0
+  44:Ourwares/gateway_PCtoCAN.c **** 	struct GATEWAYPCTOCAN* p;
+  45:Ourwares/gateway_PCtoCAN.c **** 
+ARM GAS  /tmp/cc1OSpyy.s 			page 3
+
+
+  46:Ourwares/gateway_PCtoCAN.c **** 	/* Get control block for conversion to CAN */
+  47:Ourwares/gateway_PCtoCAN.c **** 	p = (struct GATEWAYPCTOCAN*)calloc(1,sizeof(struct GATEWAYPCTOCAN));
+  73              		.loc 1 47 0
+  74 0004 1021     		movs	r1, #16
+  75 0006 0120     		movs	r0, #1
+  76              	.LVL2:
+  77 0008 FFF7FEFF 		bl	calloc
+  78              	.LVL3:
+  48:Ourwares/gateway_PCtoCAN.c **** 	if (p == NULL) return p;
+  79              		.loc 1 48 0
+  80 000c 0446     		mov	r4, r0
+  81 000e 20B1     		cbz	r0, .L3
+  49:Ourwares/gateway_PCtoCAN.c **** 	prbcb->pgptc = p; // Save ptr in BCB for unloading dma
+  82              		.loc 1 49 0
+  83 0010 6864     		str	r0, [r5, #68]
+  50:Ourwares/gateway_PCtoCAN.c **** 
+  51:Ourwares/gateway_PCtoCAN.c **** 	new_init(p);	// Initialize for new (first) CAN msg construction
+  84              		.loc 1 51 0
+  85 0012 FFF7FEFF 		bl	new_init
+  86              	.LVL4:
+  52:Ourwares/gateway_PCtoCAN.c **** 	p->pcanp = (struct CANRCVBUFPLUS*)prbcb->pbegin;
+  87              		.loc 1 52 0
+  88 0016 6B68     		ldr	r3, [r5, #4]
+  89 0018 2360     		str	r3, [r4]
+  90              	.L3:
+  53:Ourwares/gateway_PCtoCAN.c **** 	return p;
+  54:Ourwares/gateway_PCtoCAN.c **** }
+  91              		.loc 1 54 0
+  92 001a 2046     		mov	r0, r4
+  93 001c 38BD     		pop	{r3, r4, r5, pc}
+  94              		.cfi_endproc
+  95              	.LFE130:
+  97 001e 00BF     		.section	.text.gateway_PCtoCAN_unloaddma,"ax",%progbits
+  98              		.align	2
+  99              		.global	gateway_PCtoCAN_unloaddma
+ 100              		.thumb
+ 101              		.thumb_func
+ 103              	gateway_PCtoCAN_unloaddma:
+ 104              	.LFB131:
+  55:Ourwares/gateway_PCtoCAN.c **** /* **************************************************************************************
+  56:Ourwares/gateway_PCtoCAN.c ****  * void gateway_PCtoCAN_unloaddma(struct SERIALRCVBCB* prbcb);
+  57:Ourwares/gateway_PCtoCAN.c ****  * @brief	: build CAN msgs and add to line buffers for dma data available
+  58:Ourwares/gateway_PCtoCAN.c ****  * @return	: prbcb->pgptc->error:
+  59:Ourwares/gateway_PCtoCAN.c ****  *          :      0  = no errors
+  60:Ourwares/gateway_PCtoCAN.c ****  *				: (1<<0) |=  1 not assigned
+  61:Ourwares/gateway_PCtoCAN.c ****  *          : (1<<1) |=  2 completed, but bad checksum
+  62:Ourwares/gateway_PCtoCAN.c ****  *  		   : (1<<2) |=  4 line terminator and state sequence not complete
+  63:Ourwares/gateway_PCtoCAN.c ****  *		      : (1<<3) |=  8 sequence number did not mismatch
+  64:Ourwares/gateway_PCtoCAN.c ****  *		      : (1<<4) |= 10 too many chars
+  65:Ourwares/gateway_PCtoCAN.c ****  *          : (1<<5) |= 20 DLC greater than 8 (too large)
+  66:Ourwares/gateway_PCtoCAN.c ****  * ************************************************************************************** */
+  67:Ourwares/gateway_PCtoCAN.c **** /*  Format of line returned in ptr->c[]:
+  68:Ourwares/gateway_PCtoCAN.c **** incoming ascii expects is--
+  69:Ourwares/gateway_PCtoCAN.c **** 	seq,asciihex...,checksum, newline
+  70:Ourwares/gateway_PCtoCAN.c **** (seq = one byte sequence number converted to ascii/hex)
+  71:Ourwares/gateway_PCtoCAN.c **** (note: checksum is on the *binary* not ascii data):~/GliderWinch/sensor/gateway_ftdi/trunk
+  72:Ourwares/gateway_PCtoCAN.c **** and converts to binary data returned in--
+ARM GAS  /tmp/cc1OSpyy.s 			page 4
+
+
+  73:Ourwares/gateway_PCtoCAN.c **** 	ptr->c[]
+  74:Ourwares/gateway_PCtoCAN.c **** where--
+  75:Ourwares/gateway_PCtoCAN.c **** 	ptr->ct = count of binary bytes of data.
+  76:Ourwares/gateway_PCtoCAN.c **** */
+  77:Ourwares/gateway_PCtoCAN.c **** 
+  78:Ourwares/gateway_PCtoCAN.c **** /* Lookup table to convert one hex char to binary (4 bits), no checking for illegal incoming hex */
+  79:Ourwares/gateway_PCtoCAN.c **** const uint8_t hexbin[256] = {
+  80:Ourwares/gateway_PCtoCAN.c **** /*          0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15   */
+  81:Ourwares/gateway_PCtoCAN.c **** /*  0  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  82:Ourwares/gateway_PCtoCAN.c **** /*  1  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  83:Ourwares/gateway_PCtoCAN.c **** /*  2  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  84:Ourwares/gateway_PCtoCAN.c **** /*  3  */   0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  0,  0,  0,  0,  0,  0,
+  85:Ourwares/gateway_PCtoCAN.c **** /*  4  */   0, 10, 11, 12, 13, 14, 15,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  86:Ourwares/gateway_PCtoCAN.c **** /*  5  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  87:Ourwares/gateway_PCtoCAN.c **** /*  6  */   0, 10, 11, 12, 13, 14, 15,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  88:Ourwares/gateway_PCtoCAN.c **** /*  7  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  89:Ourwares/gateway_PCtoCAN.c **** /*  8  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  90:Ourwares/gateway_PCtoCAN.c **** /*  9  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  91:Ourwares/gateway_PCtoCAN.c **** /* 10  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  92:Ourwares/gateway_PCtoCAN.c **** /* 11  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  93:Ourwares/gateway_PCtoCAN.c **** /* 12  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  94:Ourwares/gateway_PCtoCAN.c **** /* 13  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  95:Ourwares/gateway_PCtoCAN.c **** /* 14  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  96:Ourwares/gateway_PCtoCAN.c **** /* 15  */   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+  97:Ourwares/gateway_PCtoCAN.c **** };
+  98:Ourwares/gateway_PCtoCAN.c **** 
+  99:Ourwares/gateway_PCtoCAN.c **** void gateway_PCtoCAN_unloaddma(struct SERIALRCVBCB* prbcb)
+ 100:Ourwares/gateway_PCtoCAN.c **** {	// Here, a DMA interrupt means there is new data in the DMA buffer
+ 105              		.loc 1 100 0
+ 106              		.cfi_startproc
+ 107              		@ args = 0, pretend = 0, frame = 8
+ 108              		@ frame_needed = 0, uses_anonymous_args = 0
+ 109              	.LVL5:
+ 110 0000 70B5     		push	{r4, r5, r6, lr}
+ 111              	.LCFI1:
+ 112              		.cfi_def_cfa_offset 16
+ 113              		.cfi_offset 4, -16
+ 114              		.cfi_offset 5, -12
+ 115              		.cfi_offset 6, -8
+ 116              		.cfi_offset 14, -4
+ 117 0002 84B0     		sub	sp, sp, #16
+ 118              	.LCFI2:
+ 119              		.cfi_def_cfa_offset 32
+ 120 0004 0546     		mov	r5, r0
+ 101:Ourwares/gateway_PCtoCAN.c **** 
+ 102:Ourwares/gateway_PCtoCAN.c **** 	struct GATEWAYPCTOCAN* p = prbcb->pgptc;	// Easy to use ptr
+ 121              		.loc 1 102 0
+ 122 0006 446C     		ldr	r4, [r0, #68]
+ 123              	.LVL6:
+ 103:Ourwares/gateway_PCtoCAN.c **** 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+ 124              		.loc 1 103 0
+ 125 0008 0023     		movs	r3, #0
+ 126 000a 0393     		str	r3, [sp, #12]
+ 104:Ourwares/gateway_PCtoCAN.c **** 
+ 105:Ourwares/gateway_PCtoCAN.c **** 	uint16_t dmandtr;	// Number of data items remaining in DMA NDTR register
+ 106:Ourwares/gateway_PCtoCAN.c **** 	int32_t diff;
+ 107:Ourwares/gateway_PCtoCAN.c **** 	char c;
+ARM GAS  /tmp/cc1OSpyy.s 			page 5
+
+
+ 108:Ourwares/gateway_PCtoCAN.c **** 		
+ 109:Ourwares/gateway_PCtoCAN.c **** 	/* Get number of data items remaining in DMA buffer "now" from DMA NDTR register. */
+ 110:Ourwares/gateway_PCtoCAN.c **** 	dmandtr = __HAL_DMA_GET_COUNTER(prbcb->phuart->hdmarx); 
+ 127              		.loc 1 110 0
+ 128 000c C369     		ldr	r3, [r0, #28]
+ 129 000e 5B6B     		ldr	r3, [r3, #52]
+ 130 0010 1B68     		ldr	r3, [r3]
+ 131 0012 5E68     		ldr	r6, [r3, #4]
+ 132              	.LVL7:
+ 111:Ourwares/gateway_PCtoCAN.c **** 
+ 112:Ourwares/gateway_PCtoCAN.c **** 	/* Difference between where we are taking out chars, and where DMA is, or was, storing. */
+ 113:Ourwares/gateway_PCtoCAN.c **** 	diff = prbcb->penddma - dmandtr - prbcb->ptakedma; 
+ 133              		.loc 1 113 0
+ 134 0014 026B     		ldr	r2, [r0, #48]
+ 135 0016 B6B2     		uxth	r6, r6
+ 136 0018 931B     		subs	r3, r2, r6
+ 137 001a 466B     		ldr	r6, [r0, #52]
+ 138              	.LVL8:
+ 114:Ourwares/gateway_PCtoCAN.c **** 	if (diff < 0)
+ 139              		.loc 1 114 0
+ 140 001c 9E1B     		subs	r6, r3, r6
+ 141              	.LVL9:
+ 142 001e 40F1D880 		bpl	.L7
+ 115:Ourwares/gateway_PCtoCAN.c **** 	{ // Wrap around
+ 116:Ourwares/gateway_PCtoCAN.c **** 		diff += prbcb->dmasize;
+ 143              		.loc 1 116 0
+ 144 0022 C38F     		ldrh	r3, [r0, #62]
+ 145 0024 1E44     		add	r6, r6, r3
+ 146              	.LVL10:
+ 147 0026 D4E0     		b	.L7
+ 148              	.LVL11:
+ 149              	.L29:
+ 117:Ourwares/gateway_PCtoCAN.c **** 	}
+ 118:Ourwares/gateway_PCtoCAN.c **** 
+ 119:Ourwares/gateway_PCtoCAN.c **** 	/* Remove DMA chars and construct CAN msg(s), using data available. */
+ 120:Ourwares/gateway_PCtoCAN.c **** 	while (diff > 0) // Run until chars available are used up.
+ 121:Ourwares/gateway_PCtoCAN.c **** 	{
+ 122:Ourwares/gateway_PCtoCAN.c **** 		diff -= 1;
+ 150              		.loc 1 122 0
+ 151 0028 013E     		subs	r6, r6, #1
+ 152              	.LVL12:
+ 123:Ourwares/gateway_PCtoCAN.c **** 		c = *prbcb->ptakedma++; // XGet char from dma buffer and advance dma ptr
+ 153              		.loc 1 123 0
+ 154 002a 6B6B     		ldr	r3, [r5, #52]
+ 155 002c 5A1C     		adds	r2, r3, #1
+ 156 002e 6A63     		str	r2, [r5, #52]
+ 157 0030 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 158              	.LVL13:
+ 124:Ourwares/gateway_PCtoCAN.c **** 		if (prbcb->ptakedma == prbcb->penddma) prbcb->ptakedma = prbcb->pbegindma;
+ 159              		.loc 1 124 0
+ 160 0032 296B     		ldr	r1, [r5, #48]
+ 161 0034 8A42     		cmp	r2, r1
+ 162 0036 01D1     		bne	.L8
+ 163              		.loc 1 124 0 is_stmt 0 discriminator 1
+ 164 0038 EA6A     		ldr	r2, [r5, #44]
+ 165 003a 6A63     		str	r2, [r5, #52]
+ 166              	.L8:
+ARM GAS  /tmp/cc1OSpyy.s 			page 6
+
+
+ 125:Ourwares/gateway_PCtoCAN.c **** 			
+ 126:Ourwares/gateway_PCtoCAN.c **** 		/* CAN msg ascii/hex separated with LINETERMINATOR. */
+ 127:Ourwares/gateway_PCtoCAN.c **** 		// 0x0D takes care of someone typing in stuff with minicom
+ 128:Ourwares/gateway_PCtoCAN.c **** 		if ((c == 0XD) || (c == LINETERMINATOR))
+ 167              		.loc 1 128 0 is_stmt 1
+ 168 003c 0D2B     		cmp	r3, #13
+ 169 003e 01D0     		beq	.L9
+ 170              		.loc 1 128 0 is_stmt 0 discriminator 1
+ 171 0040 0A2B     		cmp	r3, #10
+ 172 0042 2DD1     		bne	.L10
+ 173              	.L9:
+ 129:Ourwares/gateway_PCtoCAN.c **** 		{ // Here End of Line
+ 130:Ourwares/gateway_PCtoCAN.c **** 			
+ 131:Ourwares/gateway_PCtoCAN.c **** 			/* End of line signals end of CAN msg; beginning of new.  */
+ 132:Ourwares/gateway_PCtoCAN.c **** 			if (p->state != 7) // Did it end correctly?
+ 174              		.loc 1 132 0 is_stmt 1
+ 175 0044 A37A     		ldrb	r3, [r4, #10]	@ zero_extendqisi2
+ 176              	.LVL14:
+ 177 0046 072B     		cmp	r3, #7
+ 178 0048 03D0     		beq	.L11
+ 133:Ourwares/gateway_PCtoCAN.c **** 			{ // Here, no.
+ 134:Ourwares/gateway_PCtoCAN.c **** 				p->error |= (1<<2);	// Line terminator came at wrong place.
+ 179              		.loc 1 134 0
+ 180 004a E37A     		ldrb	r3, [r4, #11]	@ zero_extendqisi2
+ 181 004c 43F00403 		orr	r3, r3, #4
+ 182 0050 E372     		strb	r3, [r4, #11]
+ 183              	.L11:
+ 135:Ourwares/gateway_PCtoCAN.c **** 			}
+ 136:Ourwares/gateway_PCtoCAN.c **** 
+ 137:Ourwares/gateway_PCtoCAN.c **** 			/* Give the user of the CAN msg some info. */
+ 138:Ourwares/gateway_PCtoCAN.c **** 			p->pcanp->seq   = p->binseq;
+ 184              		.loc 1 138 0
+ 185 0052 2368     		ldr	r3, [r4]
+ 186 0054 227A     		ldrb	r2, [r4, #8]	@ zero_extendqisi2
+ 187 0056 5A74     		strb	r2, [r3, #17]
+ 139:Ourwares/gateway_PCtoCAN.c **** 			p->pcanp->error = p->error;
+ 188              		.loc 1 139 0
+ 189 0058 2368     		ldr	r3, [r4]
+ 190 005a E27A     		ldrb	r2, [r4, #11]	@ zero_extendqisi2
+ 191 005c 1A74     		strb	r2, [r3, #16]
+ 140:Ourwares/gateway_PCtoCAN.c **** 
+ 141:Ourwares/gateway_PCtoCAN.c **** 			/* Advance to beginning of next CAN msg (line) buffer */
+ 142:Ourwares/gateway_PCtoCAN.c **** 			prbcb->padd += prbcb->linesize;	// Step ahead one line buffer length
+ 192              		.loc 1 142 0
+ 193 005e AB8F     		ldrh	r3, [r5, #60]
+ 194 0060 EA68     		ldr	r2, [r5, #12]
+ 195 0062 1344     		add	r3, r3, r2
+ 196 0064 EB60     		str	r3, [r5, #12]
+ 143:Ourwares/gateway_PCtoCAN.c **** 			if (prbcb->padd == prbcb->pend) prbcb->padd = prbcb->pbegin;
+ 197              		.loc 1 143 0
+ 198 0066 AA68     		ldr	r2, [r5, #8]
+ 199 0068 9342     		cmp	r3, r2
+ 200 006a 01D1     		bne	.L12
+ 201              		.loc 1 143 0 is_stmt 0 discriminator 1
+ 202 006c 6B68     		ldr	r3, [r5, #4]
+ 203 006e EB60     		str	r3, [r5, #12]
+ 204              	.L12:
+ARM GAS  /tmp/cc1OSpyy.s 			page 7
+
+
+ 144:Ourwares/gateway_PCtoCAN.c **** 
+ 145:Ourwares/gateway_PCtoCAN.c **** 			/* Notify originating task that a CAN msg is ready. */
+ 146:Ourwares/gateway_PCtoCAN.c **** 			xTaskNotifyFromISR(prbcb->tskhandle, 
+ 205              		.loc 1 146 0 is_stmt 1
+ 206 0070 03AB     		add	r3, sp, #12
+ 207 0072 0093     		str	r3, [sp]
+ 208 0074 0023     		movs	r3, #0
+ 209 0076 0122     		movs	r2, #1
+ 210 0078 696A     		ldr	r1, [r5, #36]
+ 211 007a 286A     		ldr	r0, [r5, #32]
+ 212 007c FFF7FEFF 		bl	xTaskGenericNotifyFromISR
+ 213              	.LVL15:
+ 147:Ourwares/gateway_PCtoCAN.c **** 				prbcb->notebit,	/* 'or' bit assigned to buffer to notification value. */
+ 148:Ourwares/gateway_PCtoCAN.c **** 				eSetBits,         /* Use the 'or' option */
+ 149:Ourwares/gateway_PCtoCAN.c **** 				&xHigherPriorityTaskWoken );
+ 150:Ourwares/gateway_PCtoCAN.c **** 
+ 151:Ourwares/gateway_PCtoCAN.c **** 			portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+ 214              		.loc 1 151 0
+ 215 0080 039B     		ldr	r3, [sp, #12]
+ 216 0082 3BB1     		cbz	r3, .L13
+ 217              		.loc 1 151 0 is_stmt 0 discriminator 1
+ 218 0084 4FF08052 		mov	r2, #268435456
+ 219 0088 544B     		ldr	r3, .L31
+ 220 008a 1A60     		str	r2, [r3]
+ 221              		.syntax unified
+ 222              	@ 151 "Ourwares/gateway_PCtoCAN.c" 1
+ 223 008c BFF34F8F 		dsb
+ 224              	@ 0 "" 2
+ 225              	@ 151 "Ourwares/gateway_PCtoCAN.c" 1
+ 226 0090 BFF36F8F 		isb
+ 227              	@ 0 "" 2
+ 228              		.thumb
+ 229              		.syntax unified
+ 230              	.L13:
+ 152:Ourwares/gateway_PCtoCAN.c **** 
+ 153:Ourwares/gateway_PCtoCAN.c **** 			/* Initialize for next CAN msg */
+ 154:Ourwares/gateway_PCtoCAN.c **** 			new_init(p);
+ 231              		.loc 1 154 0 is_stmt 1
+ 232 0094 2046     		mov	r0, r4
+ 233 0096 FFF7FEFF 		bl	new_init
+ 234              	.LVL16:
+ 155:Ourwares/gateway_PCtoCAN.c **** 
+ 156:Ourwares/gateway_PCtoCAN.c **** 			/* CAN msg starts at beginning of next "line" buffer. */
+ 157:Ourwares/gateway_PCtoCAN.c **** 			p->pcanp = (struct CANRCVBUFPLUS*)prbcb->padd;
+ 235              		.loc 1 157 0
+ 236 009a EB68     		ldr	r3, [r5, #12]
+ 237 009c 2360     		str	r3, [r4]
+ 238 009e 98E0     		b	.L7
+ 239              	.LVL17:
+ 240              	.L10:
+ 158:Ourwares/gateway_PCtoCAN.c **** 		}
+ 159:Ourwares/gateway_PCtoCAN.c **** 		else
+ 160:Ourwares/gateway_PCtoCAN.c **** 		{ // Not end-of-line.  Convert ascii/hex to binary bytes
+ 161:Ourwares/gateway_PCtoCAN.c **** 			if (p->odd == 1)
+ 241              		.loc 1 161 0
+ 242 00a0 627B     		ldrb	r2, [r4, #13]	@ zero_extendqisi2
+ 243 00a2 012A     		cmp	r2, #1
+ARM GAS  /tmp/cc1OSpyy.s 			page 8
+
+
+ 244 00a4 06D1     		bne	.L15
+ 162:Ourwares/gateway_PCtoCAN.c **** 			{ // High order nibble
+ 163:Ourwares/gateway_PCtoCAN.c **** 				p->odd = 0;
+ 245              		.loc 1 163 0
+ 246 00a6 0022     		movs	r2, #0
+ 247 00a8 6273     		strb	r2, [r4, #13]
+ 164:Ourwares/gateway_PCtoCAN.c **** 				p->bin = hexbin[(uint8_t)c] << 4; // Lookup binary, given ascii
+ 248              		.loc 1 164 0
+ 249 00aa 4D4A     		ldr	r2, .L31+4
+ 250 00ac D35C     		ldrb	r3, [r2, r3]	@ zero_extendqisi2
+ 251              	.LVL18:
+ 252 00ae 1B01     		lsls	r3, r3, #4
+ 253 00b0 2373     		strb	r3, [r4, #12]
+ 254 00b2 8EE0     		b	.L7
+ 255              	.LVL19:
+ 256              	.L15:
+ 165:Ourwares/gateway_PCtoCAN.c **** 			}
+ 166:Ourwares/gateway_PCtoCAN.c **** 			else
+ 167:Ourwares/gateway_PCtoCAN.c **** 			{ // Low order nibble completes byte
+ 168:Ourwares/gateway_PCtoCAN.c **** 				p->odd = 1;
+ 257              		.loc 1 168 0
+ 258 00b4 0122     		movs	r2, #1
+ 259 00b6 6273     		strb	r2, [r4, #13]
+ 169:Ourwares/gateway_PCtoCAN.c **** 				p->bin |= hexbin[(uint8_t)c];
+ 260              		.loc 1 169 0
+ 261 00b8 494A     		ldr	r2, .L31+4
+ 262 00ba D25C     		ldrb	r2, [r2, r3]	@ zero_extendqisi2
+ 263 00bc 237B     		ldrb	r3, [r4, #12]	@ zero_extendqisi2
+ 264              	.LVL20:
+ 265 00be 1343     		orrs	r3, r3, r2
+ 266 00c0 2373     		strb	r3, [r4, #12]
+ 170:Ourwares/gateway_PCtoCAN.c **** 				
+ 171:Ourwares/gateway_PCtoCAN.c **** 				/* Store binary bytes directly into CAN buffer location */
+ 172:Ourwares/gateway_PCtoCAN.c **** 				/* Build checksum as we go. */
+ 173:Ourwares/gateway_PCtoCAN.c **** 				switch(p->state)
+ 267              		.loc 1 173 0
+ 268 00c2 A27A     		ldrb	r2, [r4, #10]	@ zero_extendqisi2
+ 269 00c4 072A     		cmp	r2, #7
+ 270 00c6 00F28480 		bhi	.L7
+ 271 00ca DFE802F0 		tbb	[pc, r2]
+ 272              	.L17:
+ 273 00ce 04       		.byte	(.L16-.L17)/2
+ 274 00cf 0B       		.byte	(.L18-.L17)/2
+ 275 00d0 15       		.byte	(.L19-.L17)/2
+ 276 00d1 22       		.byte	(.L20-.L17)/2
+ 277 00d2 2F       		.byte	(.L21-.L17)/2
+ 278 00d3 3C       		.byte	(.L22-.L17)/2
+ 279 00d4 4F       		.byte	(.L23-.L17)/2
+ 280 00d5 7E       		.byte	(.L24-.L17)/2
+ 281              		.p2align 1
+ 282              	.L16:
+ 174:Ourwares/gateway_PCtoCAN.c **** 				{
+ 175:Ourwares/gateway_PCtoCAN.c **** 				case 0: // Sequence number
+ 176:Ourwares/gateway_PCtoCAN.c **** 					p->binseq   = p->bin;
+ 283              		.loc 1 176 0
+ 284 00d6 2372     		strb	r3, [r4, #8]
+ 177:Ourwares/gateway_PCtoCAN.c **** 					p->chksumx += p->bin;
+ARM GAS  /tmp/cc1OSpyy.s 			page 9
+
+
+ 285              		.loc 1 177 0
+ 286 00d8 6168     		ldr	r1, [r4, #4]
+ 287 00da 0B44     		add	r3, r3, r1
+ 288 00dc 6360     		str	r3, [r4, #4]
+ 178:Ourwares/gateway_PCtoCAN.c **** 					p->state   += 1;
+ 289              		.loc 1 178 0
+ 290 00de 0132     		adds	r2, r2, #1
+ 291 00e0 A272     		strb	r2, [r4, #10]
+ 179:Ourwares/gateway_PCtoCAN.c **** 					break;
+ 292              		.loc 1 179 0
+ 293 00e2 76E0     		b	.L7
+ 294              	.L18:
+ 180:Ourwares/gateway_PCtoCAN.c **** 				case 1: // Low order byte of CAN id word
+ 181:Ourwares/gateway_PCtoCAN.c **** 					p->pcanp->can.id   = (p->bin << 0);
+ 295              		.loc 1 181 0
+ 296 00e4 2268     		ldr	r2, [r4]
+ 297 00e6 1360     		str	r3, [r2]
+ 182:Ourwares/gateway_PCtoCAN.c **** 					p->state   += 1;
+ 298              		.loc 1 182 0
+ 299 00e8 A37A     		ldrb	r3, [r4, #10]	@ zero_extendqisi2
+ 300 00ea 0133     		adds	r3, r3, #1
+ 301 00ec A372     		strb	r3, [r4, #10]
+ 183:Ourwares/gateway_PCtoCAN.c **** 					p->chksumx += p->bin;
+ 302              		.loc 1 183 0
+ 303 00ee 237B     		ldrb	r3, [r4, #12]	@ zero_extendqisi2
+ 304 00f0 6268     		ldr	r2, [r4, #4]
+ 305 00f2 1344     		add	r3, r3, r2
+ 306 00f4 6360     		str	r3, [r4, #4]
+ 184:Ourwares/gateway_PCtoCAN.c **** 					break;
+ 307              		.loc 1 184 0
+ 308 00f6 6CE0     		b	.L7
+ 309              	.L19:
+ 185:Ourwares/gateway_PCtoCAN.c **** 				case 2:
+ 186:Ourwares/gateway_PCtoCAN.c **** 					p->pcanp->can.id  |= (p->bin << 8);
+ 310              		.loc 1 186 0
+ 311 00f8 2168     		ldr	r1, [r4]
+ 312 00fa 0A68     		ldr	r2, [r1]
+ 313 00fc 42EA0323 		orr	r3, r2, r3, lsl #8
+ 314 0100 0B60     		str	r3, [r1]
+ 187:Ourwares/gateway_PCtoCAN.c **** 					p->chksumx += p->bin;
+ 315              		.loc 1 187 0
+ 316 0102 237B     		ldrb	r3, [r4, #12]	@ zero_extendqisi2
+ 317 0104 6268     		ldr	r2, [r4, #4]
+ 318 0106 1344     		add	r3, r3, r2
+ 319 0108 6360     		str	r3, [r4, #4]
+ 188:Ourwares/gateway_PCtoCAN.c **** 					p->state   += 1;
+ 320              		.loc 1 188 0
+ 321 010a A37A     		ldrb	r3, [r4, #10]	@ zero_extendqisi2
+ 322 010c 0133     		adds	r3, r3, #1
+ 323 010e A372     		strb	r3, [r4, #10]
+ 189:Ourwares/gateway_PCtoCAN.c **** 					break;
+ 324              		.loc 1 189 0
+ 325 0110 5FE0     		b	.L7
+ 326              	.L20:
+ 190:Ourwares/gateway_PCtoCAN.c **** 				case 3:
+ 191:Ourwares/gateway_PCtoCAN.c **** 					p->pcanp->can.id  |= (p->bin << 16);
+ 327              		.loc 1 191 0
+ARM GAS  /tmp/cc1OSpyy.s 			page 10
+
+
+ 328 0112 2168     		ldr	r1, [r4]
+ 329 0114 0A68     		ldr	r2, [r1]
+ 330 0116 42EA0343 		orr	r3, r2, r3, lsl #16
+ 331 011a 0B60     		str	r3, [r1]
+ 192:Ourwares/gateway_PCtoCAN.c **** 					p->chksumx += p->bin;
+ 332              		.loc 1 192 0
+ 333 011c 237B     		ldrb	r3, [r4, #12]	@ zero_extendqisi2
+ 334 011e 6268     		ldr	r2, [r4, #4]
+ 335 0120 1344     		add	r3, r3, r2
+ 336 0122 6360     		str	r3, [r4, #4]
+ 193:Ourwares/gateway_PCtoCAN.c **** 					p->state   += 1;
+ 337              		.loc 1 193 0
+ 338 0124 A37A     		ldrb	r3, [r4, #10]	@ zero_extendqisi2
+ 339 0126 0133     		adds	r3, r3, #1
+ 340 0128 A372     		strb	r3, [r4, #10]
+ 194:Ourwares/gateway_PCtoCAN.c **** 					break;
+ 341              		.loc 1 194 0
+ 342 012a 52E0     		b	.L7
+ 343              	.L21:
+ 195:Ourwares/gateway_PCtoCAN.c **** 				case 4: // High order byte of CAN id word
+ 196:Ourwares/gateway_PCtoCAN.c **** 					p->pcanp->can.id  |= (p->bin << 24);
+ 344              		.loc 1 196 0
+ 345 012c 2168     		ldr	r1, [r4]
+ 346 012e 0A68     		ldr	r2, [r1]
+ 347 0130 42EA0363 		orr	r3, r2, r3, lsl #24
+ 348 0134 0B60     		str	r3, [r1]
+ 197:Ourwares/gateway_PCtoCAN.c **** 					p->chksumx += p->bin;
+ 349              		.loc 1 197 0
+ 350 0136 237B     		ldrb	r3, [r4, #12]	@ zero_extendqisi2
+ 351 0138 6268     		ldr	r2, [r4, #4]
+ 352 013a 1344     		add	r3, r3, r2
+ 353 013c 6360     		str	r3, [r4, #4]
+ 198:Ourwares/gateway_PCtoCAN.c **** 					p->state   += 1;
+ 354              		.loc 1 198 0
+ 355 013e A37A     		ldrb	r3, [r4, #10]	@ zero_extendqisi2
+ 356 0140 0133     		adds	r3, r3, #1
+ 357 0142 A372     		strb	r3, [r4, #10]
+ 199:Ourwares/gateway_PCtoCAN.c **** 					break;
+ 358              		.loc 1 199 0
+ 359 0144 45E0     		b	.L7
+ 360              	.L22:
+ 200:Ourwares/gateway_PCtoCAN.c **** 				case 5: // DLC byte -> CAN msg dlc word
+ 201:Ourwares/gateway_PCtoCAN.c **** 					if (p->bin > 8)
+ 361              		.loc 1 201 0
+ 362 0146 082B     		cmp	r3, #8
+ 363 0148 05D9     		bls	.L25
+ 202:Ourwares/gateway_PCtoCAN.c **** 					{ // DLC too large.
+ 203:Ourwares/gateway_PCtoCAN.c **** 						p->bin = 8; //Do not overrun array!
+ 364              		.loc 1 203 0
+ 365 014a 0823     		movs	r3, #8
+ 366 014c 2373     		strb	r3, [r4, #12]
+ 204:Ourwares/gateway_PCtoCAN.c **** 						p->error |= (1<<5);
+ 367              		.loc 1 204 0
+ 368 014e E37A     		ldrb	r3, [r4, #11]	@ zero_extendqisi2
+ 369 0150 43F02003 		orr	r3, r3, #32
+ 370 0154 E372     		strb	r3, [r4, #11]
+ 371              	.L25:
+ARM GAS  /tmp/cc1OSpyy.s 			page 11
+
+
+ 205:Ourwares/gateway_PCtoCAN.c **** 					}
+ 206:Ourwares/gateway_PCtoCAN.c **** 					p->pcanp->can.dlc = p->bin;
+ 372              		.loc 1 206 0
+ 373 0156 2368     		ldr	r3, [r4]
+ 374 0158 227B     		ldrb	r2, [r4, #12]	@ zero_extendqisi2
+ 375 015a 5A60     		str	r2, [r3, #4]
+ 207:Ourwares/gateway_PCtoCAN.c **** 					p->chksumx   += p->bin;
+ 376              		.loc 1 207 0
+ 377 015c 237B     		ldrb	r3, [r4, #12]	@ zero_extendqisi2
+ 378 015e 6268     		ldr	r2, [r4, #4]
+ 379 0160 1344     		add	r3, r3, r2
+ 380 0162 6360     		str	r3, [r4, #4]
+ 208:Ourwares/gateway_PCtoCAN.c **** 					p->state     += 1;
+ 381              		.loc 1 208 0
+ 382 0164 A37A     		ldrb	r3, [r4, #10]	@ zero_extendqisi2
+ 383 0166 0133     		adds	r3, r3, #1
+ 384 0168 A372     		strb	r3, [r4, #10]
+ 209:Ourwares/gateway_PCtoCAN.c **** 					break;
+ 385              		.loc 1 209 0
+ 386 016a 32E0     		b	.L7
+ 387              	.L23:
+ 210:Ourwares/gateway_PCtoCAN.c **** 				case 6: // Fill data bytes per dlc
+ 211:Ourwares/gateway_PCtoCAN.c **** 					if (p->ctr < p->pcanp->can.dlc)
+ 388              		.loc 1 211 0
+ 389 016c A27B     		ldrb	r2, [r4, #14]	@ zero_extendqisi2
+ 390 016e 2168     		ldr	r1, [r4]
+ 391 0170 4868     		ldr	r0, [r1, #4]
+ 392 0172 8242     		cmp	r2, r0
+ 393 0174 09D2     		bcs	.L26
+ 212:Ourwares/gateway_PCtoCAN.c **** 					{
+ 213:Ourwares/gateway_PCtoCAN.c **** 						p->pcanp->can.cd.uc[p->ctr] = p->bin;
+ 394              		.loc 1 213 0
+ 395 0176 0A44     		add	r2, r2, r1
+ 396 0178 1372     		strb	r3, [r2, #8]
+ 214:Ourwares/gateway_PCtoCAN.c **** 						p->chksumx += p->bin;
+ 397              		.loc 1 214 0
+ 398 017a 237B     		ldrb	r3, [r4, #12]	@ zero_extendqisi2
+ 399 017c 6268     		ldr	r2, [r4, #4]
+ 400 017e 1344     		add	r3, r3, r2
+ 401 0180 6360     		str	r3, [r4, #4]
+ 215:Ourwares/gateway_PCtoCAN.c **** 						p->ctr     += 1;
+ 402              		.loc 1 215 0
+ 403 0182 A37B     		ldrb	r3, [r4, #14]	@ zero_extendqisi2
+ 404 0184 0133     		adds	r3, r3, #1
+ 405 0186 A373     		strb	r3, [r4, #14]
+ 216:Ourwares/gateway_PCtoCAN.c **** 						break;
+ 406              		.loc 1 216 0
+ 407 0188 23E0     		b	.L7
+ 408              	.L26:
+ 217:Ourwares/gateway_PCtoCAN.c **** 					}
+ 218:Ourwares/gateway_PCtoCAN.c **** 					/* Here, checksum check.  Complete checksum calculation. */
+ 219:Ourwares/gateway_PCtoCAN.c **** 					p->chksumx += (p->chksumx >> 16); // Add carries into high half word
+ 409              		.loc 1 219 0
+ 410 018a 6268     		ldr	r2, [r4, #4]
+ 411 018c 02EB1242 		add	r2, r2, r2, lsr #16
+ 220:Ourwares/gateway_PCtoCAN.c **** 					p->chksumx += (p->chksumx >> 16); // Add carry if previous add generated a carry
+ 412              		.loc 1 220 0
+ARM GAS  /tmp/cc1OSpyy.s 			page 12
+
+
+ 413 0190 02EB1242 		add	r2, r2, r2, lsr #16
+ 221:Ourwares/gateway_PCtoCAN.c **** 					p->chksumx += (p->chksumx >> 8);  // Add high byte of low half word
+ 414              		.loc 1 221 0
+ 415 0194 02EB1222 		add	r2, r2, r2, lsr #8
+ 222:Ourwares/gateway_PCtoCAN.c **** 					p->chksumx += (p->chksumx >> 8);  // Add carry if previous add generated a carry
+ 416              		.loc 1 222 0
+ 417 0198 02EB1222 		add	r2, r2, r2, lsr #8
+ 418 019c 6260     		str	r2, [r4, #4]
+ 223:Ourwares/gateway_PCtoCAN.c **** 					if ((p->chksumx & 0xff) != p->bin)
+ 419              		.loc 1 223 0
+ 420 019e D2B2     		uxtb	r2, r2
+ 421 01a0 9A42     		cmp	r2, r3
+ 422 01a2 03D0     		beq	.L27
+ 224:Ourwares/gateway_PCtoCAN.c **** 					{ // Here, checksums mismatch
+ 225:Ourwares/gateway_PCtoCAN.c **** 						p->error |=  (1<<1);
+ 423              		.loc 1 225 0
+ 424 01a4 E37A     		ldrb	r3, [r4, #11]	@ zero_extendqisi2
+ 425 01a6 43F00203 		orr	r3, r3, #2
+ 426 01aa E372     		strb	r3, [r4, #11]
+ 427              	.L27:
+ 226:Ourwares/gateway_PCtoCAN.c **** 					}
+ 227:Ourwares/gateway_PCtoCAN.c **** 
+ 228:Ourwares/gateway_PCtoCAN.c **** 					/* Check for missing msgs. */
+ 229:Ourwares/gateway_PCtoCAN.c **** 					p->ctrseq += 1;	// Advance software maintained sequence number
+ 428              		.loc 1 229 0
+ 429 01ac 637A     		ldrb	r3, [r4, #9]	@ zero_extendqisi2
+ 430 01ae 0133     		adds	r3, r3, #1
+ 431 01b0 DBB2     		uxtb	r3, r3
+ 432 01b2 6372     		strb	r3, [r4, #9]
+ 230:Ourwares/gateway_PCtoCAN.c **** 					if (p->binseq != p->ctrseq)
+ 433              		.loc 1 230 0
+ 434 01b4 227A     		ldrb	r2, [r4, #8]	@ zero_extendqisi2
+ 435 01b6 9342     		cmp	r3, r2
+ 436 01b8 04D0     		beq	.L28
+ 231:Ourwares/gateway_PCtoCAN.c **** 					{
+ 232:Ourwares/gateway_PCtoCAN.c **** 						p->error  |= (1<<3);	// Sequence number mismatch
+ 437              		.loc 1 232 0
+ 438 01ba E37A     		ldrb	r3, [r4, #11]	@ zero_extendqisi2
+ 439 01bc 43F00803 		orr	r3, r3, #8
+ 440 01c0 E372     		strb	r3, [r4, #11]
+ 233:Ourwares/gateway_PCtoCAN.c **** 						p->ctrseq = p->binseq; // Reset
+ 441              		.loc 1 233 0
+ 442 01c2 6272     		strb	r2, [r4, #9]
+ 443              	.L28:
+ 234:Ourwares/gateway_PCtoCAN.c **** 					}
+ 235:Ourwares/gateway_PCtoCAN.c **** 					p->state = 7;
+ 444              		.loc 1 235 0
+ 445 01c4 0723     		movs	r3, #7
+ 446 01c6 A372     		strb	r3, [r4, #10]
+ 236:Ourwares/gateway_PCtoCAN.c **** 					break;
+ 447              		.loc 1 236 0
+ 448 01c8 03E0     		b	.L7
+ 449              	.L24:
+ 237:Ourwares/gateway_PCtoCAN.c **** 
+ 238:Ourwares/gateway_PCtoCAN.c **** 				case 7:
+ 239:Ourwares/gateway_PCtoCAN.c **** 					p->error |= (1<<4); // Too many chars
+ 450              		.loc 1 239 0
+ARM GAS  /tmp/cc1OSpyy.s 			page 13
+
+
+ 451 01ca E37A     		ldrb	r3, [r4, #11]	@ zero_extendqisi2
+ 452 01cc 43F01003 		orr	r3, r3, #16
+ 453 01d0 E372     		strb	r3, [r4, #11]
+ 454              	.L7:
+ 120:Ourwares/gateway_PCtoCAN.c **** 	{
+ 455              		.loc 1 120 0
+ 456 01d2 002E     		cmp	r6, #0
+ 457 01d4 3FF728AF 		bgt	.L29
+ 240:Ourwares/gateway_PCtoCAN.c **** 					break;
+ 241:Ourwares/gateway_PCtoCAN.c **** 				}		
+ 242:Ourwares/gateway_PCtoCAN.c **** 			}
+ 243:Ourwares/gateway_PCtoCAN.c **** 		}
+ 244:Ourwares/gateway_PCtoCAN.c **** 	}
+ 245:Ourwares/gateway_PCtoCAN.c **** 	return;
+ 246:Ourwares/gateway_PCtoCAN.c **** }
+ 458              		.loc 1 246 0
+ 459 01d8 04B0     		add	sp, sp, #16
+ 460              	.LCFI3:
+ 461              		.cfi_def_cfa_offset 16
+ 462              		@ sp needed
+ 463 01da 70BD     		pop	{r4, r5, r6, pc}
+ 464              	.LVL21:
+ 465              	.L32:
+ 466              		.align	2
+ 467              	.L31:
+ 468 01dc 04ED00E0 		.word	-536810236
+ 469 01e0 00000000 		.word	.LANCHOR0
+ 470              		.cfi_endproc
+ 471              	.LFE131:
+ 473              		.section	.text.gateway_PCtoCAN_getCAN,"ax",%progbits
+ 474              		.align	2
+ 475              		.global	gateway_PCtoCAN_getCAN
+ 476              		.thumb
+ 477              		.thumb_func
+ 479              	gateway_PCtoCAN_getCAN:
+ 480              	.LFB132:
+ 247:Ourwares/gateway_PCtoCAN.c **** /* *************************************************************************
+ 248:Ourwares/gateway_PCtoCAN.c ****  * struct CANRCVBUFPLUS* gateway_PCtoCAN_getCAN(struct SERIALRCVBCB* pbcb);
+ 249:Ourwares/gateway_PCtoCAN.c ****  *	@brief	: Get pointer to next available CAN msg
+ 250:Ourwares/gateway_PCtoCAN.c ****  * @param	: pbcb = Pointer to Buffer Control Block
+ 251:Ourwares/gateway_PCtoCAN.c ****  * @return	: Pointer to CAN Plus msg buffer; NULL = no new msgs
+ 252:Ourwares/gateway_PCtoCAN.c ****  * *************************************************************************/
+ 253:Ourwares/gateway_PCtoCAN.c **** struct CANRCVBUFPLUS* gateway_PCtoCAN_getCAN(struct SERIALRCVBCB* pbcb)
+ 254:Ourwares/gateway_PCtoCAN.c **** {
+ 481              		.loc 1 254 0
+ 482              		.cfi_startproc
+ 483              		@ args = 0, pretend = 0, frame = 0
+ 484              		@ frame_needed = 0, uses_anonymous_args = 0
+ 485              		@ link register save eliminated.
+ 486              	.LVL22:
+ 255:Ourwares/gateway_PCtoCAN.c **** 	struct CANRCVBUFPLUS* p = NULL;
+ 256:Ourwares/gateway_PCtoCAN.c **** 
+ 257:Ourwares/gateway_PCtoCAN.c **** 	/* Check no new lines. */
+ 258:Ourwares/gateway_PCtoCAN.c **** 	if (pbcb->ptake == pbcb->padd) return p;
+ 487              		.loc 1 258 0
+ 488 0000 0369     		ldr	r3, [r0, #16]
+ 489 0002 C268     		ldr	r2, [r0, #12]
+ARM GAS  /tmp/cc1OSpyy.s 			page 14
+
+
+ 490 0004 9342     		cmp	r3, r2
+ 491 0006 09D0     		beq	.L35
+ 492              	.LVL23:
+ 259:Ourwares/gateway_PCtoCAN.c **** 	p = (struct CANRCVBUFPLUS*)pbcb->ptake;
+ 260:Ourwares/gateway_PCtoCAN.c **** 
+ 261:Ourwares/gateway_PCtoCAN.c **** 	/* Advance 'take' pointer w wraparound check. */
+ 262:Ourwares/gateway_PCtoCAN.c **** 	pbcb->ptake += pbcb->linesize;
+ 493              		.loc 1 262 0
+ 494 0008 828F     		ldrh	r2, [r0, #60]
+ 495 000a 1A44     		add	r2, r2, r3
+ 496 000c 0261     		str	r2, [r0, #16]
+ 263:Ourwares/gateway_PCtoCAN.c **** 	if (pbcb->ptake >= pbcb->pend) pbcb->ptake = pbcb->pbegin;
+ 497              		.loc 1 263 0
+ 498 000e 8168     		ldr	r1, [r0, #8]
+ 499 0010 8A42     		cmp	r2, r1
+ 500 0012 05D3     		bcc	.L36
+ 501              		.loc 1 263 0 is_stmt 0 discriminator 1
+ 502 0014 4268     		ldr	r2, [r0, #4]
+ 503 0016 0261     		str	r2, [r0, #16]
+ 264:Ourwares/gateway_PCtoCAN.c **** 
+ 265:Ourwares/gateway_PCtoCAN.c **** 	return p;
+ 504              		.loc 1 265 0 is_stmt 1 discriminator 1
+ 505 0018 1846     		mov	r0, r3
+ 506              	.LVL24:
+ 507 001a 7047     		bx	lr
+ 508              	.LVL25:
+ 509              	.L35:
+ 258:Ourwares/gateway_PCtoCAN.c **** 	p = (struct CANRCVBUFPLUS*)pbcb->ptake;
+ 510              		.loc 1 258 0
+ 511 001c 0020     		movs	r0, #0
+ 512              	.LVL26:
+ 513 001e 7047     		bx	lr
+ 514              	.LVL27:
+ 515              	.L36:
+ 516              		.loc 1 265 0
+ 517 0020 1846     		mov	r0, r3
+ 518              	.LVL28:
+ 266:Ourwares/gateway_PCtoCAN.c **** }
+ 519              		.loc 1 266 0
+ 520 0022 7047     		bx	lr
+ 521              		.cfi_endproc
+ 522              	.LFE132:
+ 524              		.global	hexbin
+ 525              		.section	.rodata.hexbin,"a",%progbits
+ 526              		.align	2
+ 527              		.set	.LANCHOR0,. + 0
+ 530              	hexbin:
+ 531 0000 00       		.byte	0
+ 532 0001 00       		.byte	0
+ 533 0002 00       		.byte	0
+ 534 0003 00       		.byte	0
+ 535 0004 00       		.byte	0
+ 536 0005 00       		.byte	0
+ 537 0006 00       		.byte	0
+ 538 0007 00       		.byte	0
+ 539 0008 00       		.byte	0
+ 540 0009 00       		.byte	0
+ARM GAS  /tmp/cc1OSpyy.s 			page 15
+
+
+ 541 000a 00       		.byte	0
+ 542 000b 00       		.byte	0
+ 543 000c 00       		.byte	0
+ 544 000d 00       		.byte	0
+ 545 000e 00       		.byte	0
+ 546 000f 00       		.byte	0
+ 547 0010 00       		.byte	0
+ 548 0011 00       		.byte	0
+ 549 0012 00       		.byte	0
+ 550 0013 00       		.byte	0
+ 551 0014 00       		.byte	0
+ 552 0015 00       		.byte	0
+ 553 0016 00       		.byte	0
+ 554 0017 00       		.byte	0
+ 555 0018 00       		.byte	0
+ 556 0019 00       		.byte	0
+ 557 001a 00       		.byte	0
+ 558 001b 00       		.byte	0
+ 559 001c 00       		.byte	0
+ 560 001d 00       		.byte	0
+ 561 001e 00       		.byte	0
+ 562 001f 00       		.byte	0
+ 563 0020 00       		.byte	0
+ 564 0021 00       		.byte	0
+ 565 0022 00       		.byte	0
+ 566 0023 00       		.byte	0
+ 567 0024 00       		.byte	0
+ 568 0025 00       		.byte	0
+ 569 0026 00       		.byte	0
+ 570 0027 00       		.byte	0
+ 571 0028 00       		.byte	0
+ 572 0029 00       		.byte	0
+ 573 002a 00       		.byte	0
+ 574 002b 00       		.byte	0
+ 575 002c 00       		.byte	0
+ 576 002d 00       		.byte	0
+ 577 002e 00       		.byte	0
+ 578 002f 00       		.byte	0
+ 579 0030 00       		.byte	0
+ 580 0031 01       		.byte	1
+ 581 0032 02       		.byte	2
+ 582 0033 03       		.byte	3
+ 583 0034 04       		.byte	4
+ 584 0035 05       		.byte	5
+ 585 0036 06       		.byte	6
+ 586 0037 07       		.byte	7
+ 587 0038 08       		.byte	8
+ 588 0039 09       		.byte	9
+ 589 003a 00       		.byte	0
+ 590 003b 00       		.byte	0
+ 591 003c 00       		.byte	0
+ 592 003d 00       		.byte	0
+ 593 003e 00       		.byte	0
+ 594 003f 00       		.byte	0
+ 595 0040 00       		.byte	0
+ 596 0041 0A       		.byte	10
+ 597 0042 0B       		.byte	11
+ARM GAS  /tmp/cc1OSpyy.s 			page 16
+
+
+ 598 0043 0C       		.byte	12
+ 599 0044 0D       		.byte	13
+ 600 0045 0E       		.byte	14
+ 601 0046 0F       		.byte	15
+ 602 0047 00       		.byte	0
+ 603 0048 00       		.byte	0
+ 604 0049 00       		.byte	0
+ 605 004a 00       		.byte	0
+ 606 004b 00       		.byte	0
+ 607 004c 00       		.byte	0
+ 608 004d 00       		.byte	0
+ 609 004e 00       		.byte	0
+ 610 004f 00       		.byte	0
+ 611 0050 00       		.byte	0
+ 612 0051 00       		.byte	0
+ 613 0052 00       		.byte	0
+ 614 0053 00       		.byte	0
+ 615 0054 00       		.byte	0
+ 616 0055 00       		.byte	0
+ 617 0056 00       		.byte	0
+ 618 0057 00       		.byte	0
+ 619 0058 00       		.byte	0
+ 620 0059 00       		.byte	0
+ 621 005a 00       		.byte	0
+ 622 005b 00       		.byte	0
+ 623 005c 00       		.byte	0
+ 624 005d 00       		.byte	0
+ 625 005e 00       		.byte	0
+ 626 005f 00       		.byte	0
+ 627 0060 00       		.byte	0
+ 628 0061 0A       		.byte	10
+ 629 0062 0B       		.byte	11
+ 630 0063 0C       		.byte	12
+ 631 0064 0D       		.byte	13
+ 632 0065 0E       		.byte	14
+ 633 0066 0F       		.byte	15
+ 634 0067 00       		.byte	0
+ 635 0068 00       		.byte	0
+ 636 0069 00       		.byte	0
+ 637 006a 00       		.byte	0
+ 638 006b 00       		.byte	0
+ 639 006c 00       		.byte	0
+ 640 006d 00       		.byte	0
+ 641 006e 00       		.byte	0
+ 642 006f 00       		.byte	0
+ 643 0070 00       		.byte	0
+ 644 0071 00       		.byte	0
+ 645 0072 00       		.byte	0
+ 646 0073 00       		.byte	0
+ 647 0074 00       		.byte	0
+ 648 0075 00       		.byte	0
+ 649 0076 00       		.byte	0
+ 650 0077 00       		.byte	0
+ 651 0078 00       		.byte	0
+ 652 0079 00       		.byte	0
+ 653 007a 00       		.byte	0
+ 654 007b 00       		.byte	0
+ARM GAS  /tmp/cc1OSpyy.s 			page 17
+
+
+ 655 007c 00       		.byte	0
+ 656 007d 00       		.byte	0
+ 657 007e 00       		.byte	0
+ 658 007f 00       		.byte	0
+ 659 0080 00       		.byte	0
+ 660 0081 00       		.byte	0
+ 661 0082 00       		.byte	0
+ 662 0083 00       		.byte	0
+ 663 0084 00       		.byte	0
+ 664 0085 00       		.byte	0
+ 665 0086 00       		.byte	0
+ 666 0087 00       		.byte	0
+ 667 0088 00       		.byte	0
+ 668 0089 00       		.byte	0
+ 669 008a 00       		.byte	0
+ 670 008b 00       		.byte	0
+ 671 008c 00       		.byte	0
+ 672 008d 00       		.byte	0
+ 673 008e 00       		.byte	0
+ 674 008f 00       		.byte	0
+ 675 0090 00       		.byte	0
+ 676 0091 00       		.byte	0
+ 677 0092 00       		.byte	0
+ 678 0093 00       		.byte	0
+ 679 0094 00       		.byte	0
+ 680 0095 00       		.byte	0
+ 681 0096 00       		.byte	0
+ 682 0097 00       		.byte	0
+ 683 0098 00       		.byte	0
+ 684 0099 00       		.byte	0
+ 685 009a 00       		.byte	0
+ 686 009b 00       		.byte	0
+ 687 009c 00       		.byte	0
+ 688 009d 00       		.byte	0
+ 689 009e 00       		.byte	0
+ 690 009f 00       		.byte	0
+ 691 00a0 00       		.byte	0
+ 692 00a1 00       		.byte	0
+ 693 00a2 00       		.byte	0
+ 694 00a3 00       		.byte	0
+ 695 00a4 00       		.byte	0
+ 696 00a5 00       		.byte	0
+ 697 00a6 00       		.byte	0
+ 698 00a7 00       		.byte	0
+ 699 00a8 00       		.byte	0
+ 700 00a9 00       		.byte	0
+ 701 00aa 00       		.byte	0
+ 702 00ab 00       		.byte	0
+ 703 00ac 00       		.byte	0
+ 704 00ad 00       		.byte	0
+ 705 00ae 00       		.byte	0
+ 706 00af 00       		.byte	0
+ 707 00b0 00       		.byte	0
+ 708 00b1 00       		.byte	0
+ 709 00b2 00       		.byte	0
+ 710 00b3 00       		.byte	0
+ 711 00b4 00       		.byte	0
+ARM GAS  /tmp/cc1OSpyy.s 			page 18
+
+
+ 712 00b5 00       		.byte	0
+ 713 00b6 00       		.byte	0
+ 714 00b7 00       		.byte	0
+ 715 00b8 00       		.byte	0
+ 716 00b9 00       		.byte	0
+ 717 00ba 00       		.byte	0
+ 718 00bb 00       		.byte	0
+ 719 00bc 00       		.byte	0
+ 720 00bd 00       		.byte	0
+ 721 00be 00       		.byte	0
+ 722 00bf 00       		.byte	0
+ 723 00c0 00       		.byte	0
+ 724 00c1 00       		.byte	0
+ 725 00c2 00       		.byte	0
+ 726 00c3 00       		.byte	0
+ 727 00c4 00       		.byte	0
+ 728 00c5 00       		.byte	0
+ 729 00c6 00       		.byte	0
+ 730 00c7 00       		.byte	0
+ 731 00c8 00       		.byte	0
+ 732 00c9 00       		.byte	0
+ 733 00ca 00       		.byte	0
+ 734 00cb 00       		.byte	0
+ 735 00cc 00       		.byte	0
+ 736 00cd 00       		.byte	0
+ 737 00ce 00       		.byte	0
+ 738 00cf 00       		.byte	0
+ 739 00d0 00       		.byte	0
+ 740 00d1 00       		.byte	0
+ 741 00d2 00       		.byte	0
+ 742 00d3 00       		.byte	0
+ 743 00d4 00       		.byte	0
+ 744 00d5 00       		.byte	0
+ 745 00d6 00       		.byte	0
+ 746 00d7 00       		.byte	0
+ 747 00d8 00       		.byte	0
+ 748 00d9 00       		.byte	0
+ 749 00da 00       		.byte	0
+ 750 00db 00       		.byte	0
+ 751 00dc 00       		.byte	0
+ 752 00dd 00       		.byte	0
+ 753 00de 00       		.byte	0
+ 754 00df 00       		.byte	0
+ 755 00e0 00       		.byte	0
+ 756 00e1 00       		.byte	0
+ 757 00e2 00       		.byte	0
+ 758 00e3 00       		.byte	0
+ 759 00e4 00       		.byte	0
+ 760 00e5 00       		.byte	0
+ 761 00e6 00       		.byte	0
+ 762 00e7 00       		.byte	0
+ 763 00e8 00       		.byte	0
+ 764 00e9 00       		.byte	0
+ 765 00ea 00       		.byte	0
+ 766 00eb 00       		.byte	0
+ 767 00ec 00       		.byte	0
+ 768 00ed 00       		.byte	0
+ARM GAS  /tmp/cc1OSpyy.s 			page 19
+
+
+ 769 00ee 00       		.byte	0
+ 770 00ef 00       		.byte	0
+ 771 00f0 00       		.byte	0
+ 772 00f1 00       		.byte	0
+ 773 00f2 00       		.byte	0
+ 774 00f3 00       		.byte	0
+ 775 00f4 00       		.byte	0
+ 776 00f5 00       		.byte	0
+ 777 00f6 00       		.byte	0
+ 778 00f7 00       		.byte	0
+ 779 00f8 00       		.byte	0
+ 780 00f9 00       		.byte	0
+ 781 00fa 00       		.byte	0
+ 782 00fb 00       		.byte	0
+ 783 00fc 00       		.byte	0
+ 784 00fd 00       		.byte	0
+ 785 00fe 00       		.byte	0
+ 786 00ff 00       		.byte	0
+ 787              		.text
+ 788              	.Letext0:
+ 789              		.file 2 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/machine/_default_t
+ 790              		.file 3 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/sys/_stdint.h"
+ 791              		.file 4 "Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/portmacro.h"
+ 792              		.file 5 "Middlewares/Third_Party/FreeRTOS/Source/include/task.h"
+ 793              		.file 6 "Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS/cmsis_os.h"
+ 794              		.file 7 "Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f407xx.h"
+ 795              		.file 8 "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_def.h"
+ 796              		.file 9 "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_dma.h"
+ 797              		.file 10 "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_uart.h"
+ 798              		.file 11 "Ourwares/common_misc.h"
+ 799              		.file 12 "Ourwares/common_can.h"
+ 800              		.file 13 "Ourwares/SerialTaskReceive.h"
+ 801              		.file 14 "Drivers/CMSIS/Include/core_cm4.h"
+ 802              		.file 15 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/malloc.h"
+ARM GAS  /tmp/cc1OSpyy.s 			page 20
+
+
+DEFINED SYMBOLS
+                            *ABS*:00000000 gateway_PCtoCAN.c
+     /tmp/cc1OSpyy.s:22     .text.new_init:00000000 $t
+     /tmp/cc1OSpyy.s:26     .text.new_init:00000000 new_init
+     /tmp/cc1OSpyy.s:53     .text.gateway_PCtoCAN_init:00000000 $t
+     /tmp/cc1OSpyy.s:58     .text.gateway_PCtoCAN_init:00000000 gateway_PCtoCAN_init
+     /tmp/cc1OSpyy.s:98     .text.gateway_PCtoCAN_unloaddma:00000000 $t
+     /tmp/cc1OSpyy.s:103    .text.gateway_PCtoCAN_unloaddma:00000000 gateway_PCtoCAN_unloaddma
+     /tmp/cc1OSpyy.s:273    .text.gateway_PCtoCAN_unloaddma:000000ce $d
+     /tmp/cc1OSpyy.s:281    .text.gateway_PCtoCAN_unloaddma:000000d6 $t
+     /tmp/cc1OSpyy.s:468    .text.gateway_PCtoCAN_unloaddma:000001dc $d
+     /tmp/cc1OSpyy.s:474    .text.gateway_PCtoCAN_getCAN:00000000 $t
+     /tmp/cc1OSpyy.s:479    .text.gateway_PCtoCAN_getCAN:00000000 gateway_PCtoCAN_getCAN
+     /tmp/cc1OSpyy.s:530    .rodata.hexbin:00000000 hexbin
+     /tmp/cc1OSpyy.s:526    .rodata.hexbin:00000000 $d
+                     .debug_frame:00000010 $d
+
+UNDEFINED SYMBOLS
+calloc
+xTaskGenericNotifyFromISR

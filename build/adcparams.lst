@@ -1,0 +1,321 @@
+ARM GAS  /tmp/ccamde7Z.s 			page 1
+
+
+   1              		.syntax unified
+   2              		.cpu cortex-m4
+   3              		.eabi_attribute 27, 1
+   4              		.eabi_attribute 28, 1
+   5              		.fpu fpv4-sp-d16
+   6              		.eabi_attribute 20, 1
+   7              		.eabi_attribute 21, 1
+   8              		.eabi_attribute 23, 3
+   9              		.eabi_attribute 24, 1
+  10              		.eabi_attribute 25, 1
+  11              		.eabi_attribute 26, 1
+  12              		.eabi_attribute 30, 1
+  13              		.eabi_attribute 34, 1
+  14              		.eabi_attribute 18, 4
+  15              		.thumb
+  16              		.syntax unified
+  17              		.file	"adcparams.c"
+  18              		.text
+  19              	.Ltext0:
+  20              		.cfi_sections	.debug_frame
+  21              		.section	.text.adcparams_init,"ax",%progbits
+  22              		.align	2
+  23              		.global	adcparams_init
+  24              		.thumb
+  25              		.thumb_func
+  27              	adcparams_init:
+  28              	.LFB0:
+  29              		.file 1 "Ourtasks/adcparams.c"
+   1:Ourtasks/adcparams.c **** /******************************************************************************
+   2:Ourtasks/adcparams.c **** * File Name          : adcparams.c
+   3:Ourtasks/adcparams.c **** * Date First Issued  : 03/09/2019
+   4:Ourtasks/adcparams.c **** * Board              : DiscoveryF4
+   5:Ourtasks/adcparams.c **** * Description        : Parameters for ADC app configuration
+   6:Ourtasks/adcparams.c **** *******************************************************************************/
+   7:Ourtasks/adcparams.c **** /*
+   8:Ourtasks/adcparams.c **** Not thread safe.
+   9:Ourtasks/adcparams.c **** */
+  10:Ourtasks/adcparams.c **** #include "adcparams.h"
+  11:Ourtasks/adcparams.c **** #include "adcparamsinit.h"
+  12:Ourtasks/adcparams.c **** 
+  13:Ourtasks/adcparams.c **** #include "DTW_counter.h"
+  14:Ourtasks/adcparams.c **** 
+  15:Ourtasks/adcparams.c **** 
+  16:Ourtasks/adcparams.c **** 
+  17:Ourtasks/adcparams.c **** /*
+  18:Ourtasks/adcparams.c **** AN3964
+  19:Ourtasks/adcparams.c **** https://www.st.com/resource/en/application_note/dm00035957.pdf
+  20:Ourtasks/adcparams.c **** V DDA = 3 × Val_V REFINT_CAL ⁄ Val_V REFINT
+  21:Ourtasks/adcparams.c **** 
+  22:Ourtasks/adcparams.c **** Temp = 80 ⁄ ( TS_CAL2 – TS_CAL1 ) × ( ValTS – TS_CAL1 ) + 30
+  23:Ourtasks/adcparams.c **** 
+  24:Ourtasks/adcparams.c **** The accurate embedded internal reference voltage (V REFINT ) is individually sampled by the
+  25:Ourtasks/adcparams.c **** ADC, and the converted value for each device (Val_V REFINT_CAL ) is stored during the
+  26:Ourtasks/adcparams.c **** manufacturing process in the protected memory area at address VREFINT_CAL specified
+  27:Ourtasks/adcparams.c **** in the product datasheet. The internal reference voltage calibration data is a 12-bit unsigned
+  28:Ourtasks/adcparams.c **** number (right-aligned bits, stored in 2 bytes) acquired by the STM32L1x ADC referenced to
+  29:Ourtasks/adcparams.c **** V VREF_MEAS = V REF+ = 3V ± 0.01V
+ARM GAS  /tmp/ccamde7Z.s 			page 2
+
+
+  30:Ourtasks/adcparams.c **** The total accuracy of the factory measured calibration data is then provided with an
+  31:Ourtasks/adcparams.c **** accuracy of ± 5 mV (refer to the datasheet for more details).
+  32:Ourtasks/adcparams.c **** We can determine the actual V DDA voltage by using the formula above as follows:
+  33:Ourtasks/adcparams.c **** V DDA = 3 × Val_V REFINT_CAL ⁄ Val_V REFINT
+  34:Ourtasks/adcparams.c **** The temperature sensor data, ValTS_bat, are sampled with the ADC scale referenced to the
+  35:Ourtasks/adcparams.c **** actual V DDA value determined at the previous steps. Since the temperature sensor factory
+  36:Ourtasks/adcparams.c **** calibration data are acquired with the ADC scale set to 3 V, we need to normalize ValTS_bat
+  37:Ourtasks/adcparams.c **** to get the temperature sensor data (ValTS) as it would be acquired with ADC scale set to
+  38:Ourtasks/adcparams.c **** 3 V. ValTS_bat can be normalized by using the formula below:
+  39:Ourtasks/adcparams.c **** ValTS = 3 × ValTS_bat ⁄ V DDA
+  40:Ourtasks/adcparams.c **** If the ADC is referenced to the 3 V power supply (which is the case of the STM32L1
+  41:Ourtasks/adcparams.c **** Discovery) such a normalization is not needed and the sampled temperature data can be
+  42:Ourtasks/adcparams.c **** directly used to determine the temperature as described in Section 2.2.1: Temperature
+  43:Ourtasks/adcparams.c **** sensor calibration.
+  44:Ourtasks/adcparams.c **** 
+  45:Ourtasks/adcparams.c **** 
+  46:Ourtasks/adcparams.c **** Vdd = 3300*(*VREFINT_CAL_ADDR)/ADC_raw;
+  47:Ourtasks/adcparams.c **** 
+  48:Ourtasks/adcparams.c **** Temp(degree) = (V_sense - V_25)/Avg_slope + 25
+  49:Ourtasks/adcparams.c **** 
+  50:Ourtasks/adcparams.c **** */
+  51:Ourtasks/adcparams.c **** 
+  52:Ourtasks/adcparams.c **** #define VREFINT_CAL_ADDR 
+  53:Ourtasks/adcparams.c **** 
+  54:Ourtasks/adcparams.c **** /* Calibration values common to all ADC modules. */
+  55:Ourtasks/adcparams.c **** struct ADCCALCOMMON adcommon;
+  56:Ourtasks/adcparams.c **** 
+  57:Ourtasks/adcparams.c **** /* ADC1 parameters, calibrations, filtering, ... */
+  58:Ourtasks/adcparams.c **** struct ADCCHANNELSTUFF adc1channelstuff[ADC1IDX_ADCSCANSIZE];
+  59:Ourtasks/adcparams.c **** 
+  60:Ourtasks/adcparams.c **** /* Raw and calibrated ADC1 readings. */
+  61:Ourtasks/adcparams.c **** struct ADC1DATA adc1data;
+  62:Ourtasks/adcparams.c **** 
+  63:Ourtasks/adcparams.c **** /* *************************************************************************
+  64:Ourtasks/adcparams.c ****  * void adcparams_init(void);
+  65:Ourtasks/adcparams.c ****  *	@brief	: Copy parameters into structs
+  66:Ourtasks/adcparams.c ****  * NOTE: => ASSUMES ADC1 ONLY <==
+  67:Ourtasks/adcparams.c ****  * *************************************************************************/
+  68:Ourtasks/adcparams.c **** void adcparams_init(void)
+  69:Ourtasks/adcparams.c **** {
+  30              		.loc 1 69 0
+  31              		.cfi_startproc
+  32              		@ args = 0, pretend = 0, frame = 0
+  33              		@ frame_needed = 0, uses_anonymous_args = 0
+  34 0000 08B5     		push	{r3, lr}
+  35              	.LCFI0:
+  36              		.cfi_def_cfa_offset 8
+  37              		.cfi_offset 3, -8
+  38              		.cfi_offset 14, -4
+  70:Ourtasks/adcparams.c **** 	/* Common to board */
+  71:Ourtasks/adcparams.c **** 	adcparamsinit_init_common(&adcommon);
+  39              		.loc 1 71 0
+  40 0002 0348     		ldr	r0, .L3
+  41 0004 FFF7FEFF 		bl	adcparamsinit_init_common
+  42              	.LVL0:
+  72:Ourtasks/adcparams.c **** 
+  73:Ourtasks/adcparams.c **** 	/* Load parameter values for ADC channels. */
+ARM GAS  /tmp/ccamde7Z.s 			page 3
+
+
+  74:Ourtasks/adcparams.c **** 	adcparamsinit_init(adc1channelstuff);
+  43              		.loc 1 74 0
+  44 0008 0248     		ldr	r0, .L3+4
+  45 000a FFF7FEFF 		bl	adcparamsinit_init
+  46              	.LVL1:
+  47 000e 08BD     		pop	{r3, pc}
+  48              	.L4:
+  49              		.align	2
+  50              	.L3:
+  51 0010 00000000 		.word	adcommon
+  52 0014 00000000 		.word	adc1channelstuff
+  53              		.cfi_endproc
+  54              	.LFE0:
+  56              		.global	__aeabi_l2f
+  57              		.section	.text.adcparams_internal,"ax",%progbits
+  58              		.align	2
+  59              		.global	adcparams_internal
+  60              		.thumb
+  61              		.thumb_func
+  63              	adcparams_internal:
+  64              	.LFB1:
+  75:Ourtasks/adcparams.c **** 	return;
+  76:Ourtasks/adcparams.c **** }
+  77:Ourtasks/adcparams.c **** 
+  78:Ourtasks/adcparams.c **** /* *************************************************************************
+  79:Ourtasks/adcparams.c ****  * void adcparams_internal(struct ADCCALCOMMON* pacom, uint16_t* ptemp, uint316_t* pvref);
+  80:Ourtasks/adcparams.c ****  *	@brief	: Update values used for compensation from Vref and Temperature
+  81:Ourtasks/adcparams.c ****  * @param	: pacom = Pointer calibration parameters for Temperature and Vref
+  82:Ourtasks/adcparams.c ****  * @param	: ptemp = Pointer to summed DMA reading
+  83:Ourtasks/adcparams.c ****  * @param	: pvref = Pointer to summed Vref reading
+  84:Ourtasks/adcparams.c ****  * *************************************************************************/
+  85:Ourtasks/adcparams.c **** uint32_t adcdbg1;
+  86:Ourtasks/adcparams.c **** uint32_t adcdbg2;
+  87:Ourtasks/adcparams.c **** void adcparams_internal(struct ADCCALCOMMON* pacom, uint16_t* ptemp, uint16_t* pvref)
+  88:Ourtasks/adcparams.c **** {
+  65              		.loc 1 88 0
+  66              		.cfi_startproc
+  67              		@ args = 0, pretend = 0, frame = 0
+  68              		@ frame_needed = 0, uses_anonymous_args = 0
+  69              	.LVL2:
+  70 0000 F8B5     		push	{r3, r4, r5, r6, r7, lr}
+  71              	.LCFI1:
+  72              		.cfi_def_cfa_offset 24
+  73              		.cfi_offset 3, -24
+  74              		.cfi_offset 4, -20
+  75              		.cfi_offset 5, -16
+  76              		.cfi_offset 6, -12
+  77              		.cfi_offset 7, -8
+  78              		.cfi_offset 14, -4
+  79 0002 0546     		mov	r5, r0
+  89:Ourtasks/adcparams.c **** /* 
+  90:Ourtasks/adcparams.c ****    Reproduced from 'adcparamsinit.h' for convenience.
+  91:Ourtasks/adcparams.c **** #define PVREFINT_CAL ((uint16_t*)0x1FFF7A2A))  // Pointer to factory calibration: Vref
+  92:Ourtasks/adcparams.c **** #define PTS_CAL1     ((uint16_t*)0x1FFF7A2C))  // Pointer to factory calibration: Vtemp
+  93:Ourtasks/adcparams.c **** #define PTS_CAL2     ((uint16_t*)0x1FFF7A2E))  // Pointer to factory calibration: Vtemp
+  94:Ourtasks/adcparams.c **** */
+  95:Ourtasks/adcparams.c **** 
+ARM GAS  /tmp/ccamde7Z.s 			page 4
+
+
+  96:Ourtasks/adcparams.c **** /* The following two computations with floats use 1500 machines cycles. */
+  97:Ourtasks/adcparams.c **** 	/* Vdd computed from Vrefint using factory calibration. */
+  98:Ourtasks/adcparams.c **** //	pacom->fvdd  = (3.300 * (float)ADC1DMANUMSEQ * (*PVREFINT_CAL)) /  (float)(*pvref);
+  99:Ourtasks/adcparams.c **** 	
+ 100:Ourtasks/adcparams.c **** 	/* Temperature computed from internal sensor using factory 
+ 101:Ourtasks/adcparams.c ****       calibrations @ Vdd = 3.3v, and adjusted for measured Vdd. */
+ 102:Ourtasks/adcparams.c **** //	pacom->degC = (pacom->ts_80caldiff) * ( (float)(*ptemp) * ( ( pacom->fvdd * (1.0/3.3) ) ) - paco
+ 103:Ourtasks/adcparams.c **** 
+ 104:Ourtasks/adcparams.c **** adcdbg1 = DTWTIME;
+  80              		.loc 1 104 0
+  81 0004 254F     		ldr	r7, .L7
+  82 0006 3B68     		ldr	r3, [r7]
+  83 0008 254E     		ldr	r6, .L7+4
+  84 000a 3360     		str	r3, [r6]
+ 105:Ourtasks/adcparams.c **** 	
+ 106:Ourtasks/adcparams.c **** /* The following two computaions with ints uses 119 machines cycles. */
+ 107:Ourtasks/adcparams.c **** 	pacom->ivdd = (3300 * ADC1DMANUMSEQ) * (*PVREFINT_CAL) / (*pvref);
+  85              		.loc 1 107 0
+  86 000c 254B     		ldr	r3, .L7+8
+  87 000e 1C88     		ldrh	r4, [r3]
+  88 0010 4CF64063 		movw	r3, #52800
+  89 0014 03FB04F3 		mul	r3, r3, r4
+  90 0018 1488     		ldrh	r4, [r2]
+  91 001a 93FBF4F4 		sdiv	r4, r3, r4
+  92 001e A4B2     		uxth	r4, r4
+  93 0020 8482     		strh	r4, [r0, #20]	@ movhi
+ 108:Ourtasks/adcparams.c **** 
+ 109:Ourtasks/adcparams.c **** 	pacom->ui_tmp = (pacom->ivdd * (*ptemp) ) / 3300; // Adjust for Vdd not at 3.3v calibration
+  94              		.loc 1 109 0
+  95 0022 0B88     		ldrh	r3, [r1]
+  96 0024 03FB04F3 		mul	r3, r3, r4
+  97 0028 1F4A     		ldr	r2, .L7+12
+  98              	.LVL3:
+  99 002a 82FB0312 		smull	r1, r2, r2, r3
+ 100              	.LVL4:
+ 101 002e 1A44     		add	r2, r2, r3
+ 102 0030 DB17     		asrs	r3, r3, #31
+ 103 0032 C3EBE223 		rsb	r3, r3, r2, asr #11
+ 104 0036 C364     		str	r3, [r0, #76]
+ 110:Ourtasks/adcparams.c **** 	pacom->degC  = pacom->ll_80caldiff * (pacom->ui_tmp - pacom->ui_cal1) + (30 * SCALE1 * ADC1DMANUMS
+ 105              		.loc 1 110 0
+ 106 0038 006C     		ldr	r0, [r0, #64]
+ 107              	.LVL5:
+ 108 003a 6A6C     		ldr	r2, [r5, #68]
+ 109 003c A96C     		ldr	r1, [r5, #72]
+ 110 003e 5B1A     		subs	r3, r3, r1
+ 111 0040 A3FB0001 		umull	r0, r1, r3, r0
+ 112 0044 03FB0211 		mla	r1, r3, r2, r1
+ 113 0048 10F1F070 		adds	r0, r0, #31457280
+ 114 004c 41F10001 		adc	r1, r1, #0
+ 115 0050 FFF7FEFF 		bl	__aeabi_l2f
+ 116              	.LVL6:
+ 111:Ourtasks/adcparams.c **** 	pacom->degC *= (1.0/(SCALE1*ADC1DMANUMSEQ)); // Fast because power of two.
+ 117              		.loc 1 111 0
+ 118 0054 9FED157A 		vldr.32	s14, .L7+16
+ 119 0058 07EE900A 		vmov	s15, r0
+ 120 005c 27EE877A 		vmul.f32	s14, s15, s14
+ARM GAS  /tmp/ccamde7Z.s 			page 5
+
+
+ 121 0060 85ED0D7A 		vstr.32	s14, [r5, #52]
+ 112:Ourtasks/adcparams.c **** 
+ 113:Ourtasks/adcparams.c **** 	pacom->fvdd = pacom->ivdd;
+ 122              		.loc 1 113 0
+ 123 0064 07EE904A 		vmov	s15, r4	@ int
+ 124 0068 F8EE677A 		vcvt.f32.u32	s15, s15
+ 114:Ourtasks/adcparams.c **** 	pacom->fvdd = pacom->fvdd + pacom->tcoef * (pacom->degC - 30);
+ 125              		.loc 1 114 0
+ 126 006c 95ED020A 		vldr.32	s0, [r5, #8]
+ 127 0070 F3EE0E6A 		vmov.f32	s13, #3.0e+1
+ 128 0074 37EE667A 		vsub.f32	s14, s14, s13
+ 129 0078 20EE077A 		vmul.f32	s14, s0, s14
+ 130 007c 37EE870A 		vadd.f32	s0, s15, s14
+ 131 0080 85ED030A 		vstr.32	s0, [r5, #12]
+ 115:Ourtasks/adcparams.c **** 
+ 116:Ourtasks/adcparams.c **** 	pacom->fvddfilt = iir_f1_f(&adc1channelstuff[ADC1IDX_INTERNALVREF].fpw.iir_f1, pacom->fvdd);
+ 132              		.loc 1 116 0
+ 133 0084 0A48     		ldr	r0, .L7+20
+ 134 0086 FFF7FEFF 		bl	iir_f1_f
+ 135              	.LVL7:
+ 136 008a 85ED040A 		vstr.32	s0, [r5, #16]
+ 117:Ourtasks/adcparams.c **** 
+ 118:Ourtasks/adcparams.c **** adcdbg2 = DTWTIME - adcdbg1;
+ 137              		.loc 1 118 0
+ 138 008e 3B68     		ldr	r3, [r7]
+ 139 0090 3268     		ldr	r2, [r6]
+ 140 0092 9B1A     		subs	r3, r3, r2
+ 141 0094 074A     		ldr	r2, .L7+24
+ 142 0096 1360     		str	r3, [r2]
+ 143 0098 F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 144              	.LVL8:
+ 145              	.L8:
+ 146 009a 00BF     		.align	2
+ 147              	.L7:
+ 148 009c 041000E0 		.word	-536866812
+ 149 00a0 00000000 		.word	adcdbg1
+ 150 00a4 2A7AFF1F 		.word	536836650
+ 151 00a8 EF09E09E 		.word	-1629484561
+ 152 00ac 00008035 		.word	897581056
+ 153 00b0 7C010000 		.word	adc1channelstuff+380
+ 154 00b4 00000000 		.word	adcdbg2
+ 155              		.cfi_endproc
+ 156              	.LFE1:
+ 158              		.comm	adcdbg2,4,4
+ 159              		.comm	adcdbg1,4,4
+ 160              		.comm	adc1data,64,4
+ 161              		.comm	adc1channelstuff,400,4
+ 162              		.comm	adcommon,80,8
+ 163              		.text
+ 164              	.Letext0:
+ 165              		.file 2 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/machine/_default_t
+ 166              		.file 3 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/sys/_stdint.h"
+ 167              		.file 4 "Ourtasks/iir_f1.h"
+ 168              		.file 5 "Ourtasks/adcparams.h"
+ 169              		.file 6 "Ourtasks/adcparamsinit.h"
+ARM GAS  /tmp/ccamde7Z.s 			page 6
+
+
+DEFINED SYMBOLS
+                            *ABS*:00000000 adcparams.c
+     /tmp/ccamde7Z.s:22     .text.adcparams_init:00000000 $t
+     /tmp/ccamde7Z.s:27     .text.adcparams_init:00000000 adcparams_init
+     /tmp/ccamde7Z.s:51     .text.adcparams_init:00000010 $d
+                            *COM*:00000050 adcommon
+                            *COM*:00000190 adc1channelstuff
+     /tmp/ccamde7Z.s:58     .text.adcparams_internal:00000000 $t
+     /tmp/ccamde7Z.s:63     .text.adcparams_internal:00000000 adcparams_internal
+     /tmp/ccamde7Z.s:148    .text.adcparams_internal:0000009c $d
+                            *COM*:00000004 adcdbg1
+                            *COM*:00000004 adcdbg2
+                            *COM*:00000040 adc1data
+                     .debug_frame:00000010 $d
+
+UNDEFINED SYMBOLS
+adcparamsinit_init_common
+adcparamsinit_init
+__aeabi_l2f
+iir_f1_f

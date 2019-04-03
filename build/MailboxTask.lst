@@ -1,0 +1,1641 @@
+ARM GAS  /tmp/cch3qXt2.s 			page 1
+
+
+   1              		.syntax unified
+   2              		.cpu cortex-m4
+   3              		.eabi_attribute 27, 1
+   4              		.eabi_attribute 28, 1
+   5              		.fpu fpv4-sp-d16
+   6              		.eabi_attribute 20, 1
+   7              		.eabi_attribute 21, 1
+   8              		.eabi_attribute 23, 3
+   9              		.eabi_attribute 24, 1
+  10              		.eabi_attribute 25, 1
+  11              		.eabi_attribute 26, 1
+  12              		.eabi_attribute 30, 1
+  13              		.eabi_attribute 34, 1
+  14              		.eabi_attribute 18, 4
+  15              		.thumb
+  16              		.syntax unified
+  17              		.file	"MailboxTask.c"
+  18              		.text
+  19              	.Ltext0:
+  20              		.cfi_sections	.debug_frame
+  21              		.section	.text.lookup,"ax",%progbits
+  22              		.align	2
+  23              		.thumb
+  24              		.thumb_func
+  26              	lookup:
+  27              	.LFB136:
+  28              		.file 1 "Ourwares/MailboxTask.c"
+   1:Ourwares/MailboxTask.c **** /******************************************************************************
+   2:Ourwares/MailboxTask.c **** * File Name          : MailboxTask.c
+   3:Ourwares/MailboxTask.c **** * Date First Issued  : 02/20/2019
+   4:Ourwares/MailboxTask.c **** * Description        : Incoming CAN msgs to Mailbox
+   5:Ourwares/MailboxTask.c **** *******************************************************************************/
+   6:Ourwares/MailboxTask.c **** 
+   7:Ourwares/MailboxTask.c **** #include "stm32f4xx_hal.h"
+   8:Ourwares/MailboxTask.c **** #include "stm32f4xx_hal_can.h"
+   9:Ourwares/MailboxTask.c **** #include "CanTask.h"
+  10:Ourwares/MailboxTask.c **** #include "MailboxTask.h"
+  11:Ourwares/MailboxTask.c **** #include "morse.h"
+  12:Ourwares/MailboxTask.c **** #include "DTW_counter.h"
+  13:Ourwares/MailboxTask.c **** #include "payload_extract.h"
+  14:Ourwares/MailboxTask.c **** #include "GatewayTask.h"
+  15:Ourwares/MailboxTask.c **** 
+  16:Ourwares/MailboxTask.c **** extern osThreadId GatewayTaskHandle;
+  17:Ourwares/MailboxTask.c **** 
+  18:Ourwares/MailboxTask.c **** /* One struct for each CAN module, e.g. CAN 1, 2, 3, ... */
+  19:Ourwares/MailboxTask.c **** struct MAILBOXCANNUM mbxcannum[STM32MAXCANNUM] = {0};
+  20:Ourwares/MailboxTask.c **** 
+  21:Ourwares/MailboxTask.c **** osThreadId MailboxTaskHandle; // This wonderful task handle
+  22:Ourwares/MailboxTask.c **** 
+  23:Ourwares/MailboxTask.c **** void StartMailboxTask(void const * argument);
+  24:Ourwares/MailboxTask.c **** static struct MAILBOXCAN* loadmbx(struct MAILBOXCANNUM* pmbxnum, struct CANRCVBUFN* pncan);
+  25:Ourwares/MailboxTask.c **** 
+  26:Ourwares/MailboxTask.c **** /* *************************************************************************
+  27:Ourwares/MailboxTask.c ****  * struct MAILBOXCANNUM* MailboxTask_add_CANlist(struct CAN_CTLBLOCK* pctl, uint16_t arraysize);
+  28:Ourwares/MailboxTask.c ****  *	@brief	: Add CAN module mailbox list
+  29:Ourwares/MailboxTask.c ****  * @param	: pctl = Pointer to CAN control block
+  30:Ourwares/MailboxTask.c ****  * @param	: arraysize = max number of mailboxes in sorted list
+ARM GAS  /tmp/cch3qXt2.s 			page 2
+
+
+  31:Ourwares/MailboxTask.c ****  * @return	: Pointer which probably will not be used; NULL = failed (more important)
+  32:Ourwares/MailboxTask.c ****  * NOTE: This is normally called in 'main' before the FreeRTOS scheduler starts.
+  33:Ourwares/MailboxTask.c ****  * *************************************************************************/
+  34:Ourwares/MailboxTask.c **** struct MAILBOXCANNUM* MailboxTask_add_CANlist(struct CAN_CTLBLOCK* pctl, uint16_t arraysize)
+  35:Ourwares/MailboxTask.c **** {
+  36:Ourwares/MailboxTask.c **** 	struct MAILBOXCAN** ppmbxarray; // Pointer to array of pointers to mailboxes
+  37:Ourwares/MailboxTask.c **** 
+  38:Ourwares/MailboxTask.c **** 	if (pctl == NULL) return NULL; // Oops
+  39:Ourwares/MailboxTask.c **** 
+  40:Ourwares/MailboxTask.c **** 	if (arraysize == 0)return NULL; // Oops
+  41:Ourwares/MailboxTask.c **** 
+  42:Ourwares/MailboxTask.c **** taskENTER_CRITICAL();
+  43:Ourwares/MailboxTask.c **** 
+  44:Ourwares/MailboxTask.c **** 	/* Save max number of mailboxes for this CAN module */
+  45:Ourwares/MailboxTask.c **** 	mbxcannum[pctl->canidx].arraysizemax = arraysize;
+  46:Ourwares/MailboxTask.c **** 
+  47:Ourwares/MailboxTask.c **** 	/* This needed to find the CAN module in 'StartMailboxTask' */
+  48:Ourwares/MailboxTask.c **** 	mbxcannum[pctl->canidx].pctl = pctl;
+  49:Ourwares/MailboxTask.c **** 
+  50:Ourwares/MailboxTask.c **** 	/* Get memory for the array of mailbox pointers */
+  51:Ourwares/MailboxTask.c **** 	ppmbxarray = (struct MAILBOXCAN**)calloc(arraysize, sizeof(struct MAILBOXCAN*));
+  52:Ourwares/MailboxTask.c **** 	if (ppmbxarray == NULL) {taskEXIT_CRITICAL();return NULL;}
+  53:Ourwares/MailboxTask.c **** 
+  54:Ourwares/MailboxTask.c **** 	/* xMailboxTaskCreate needs to be called before this 'add to list' */
+  55:Ourwares/MailboxTask.c **** 	if (MailboxTaskHandle == NULL) {taskEXIT_CRITICAL();return NULL;}
+  56:Ourwares/MailboxTask.c **** 
+  57:Ourwares/MailboxTask.c **** 	/* Get a circular buffer 'take' pointer for this CAN module. */
+  58:Ourwares/MailboxTask.c **** 	// The first three notification bits are reserved for CAN modules 
+  59:Ourwares/MailboxTask.c **** 	mbxcannum[pctl->canidx].ptake = can_iface_mbx_init(pctl, MailboxTaskHandle, (1 << pctl->canidx) );
+  60:Ourwares/MailboxTask.c **** 
+  61:Ourwares/MailboxTask.c **** 	/* Save pointer to array of pointers to mailboxes. */
+  62:Ourwares/MailboxTask.c **** 	mbxcannum[pctl->canidx].pmbxarray = ppmbxarray;
+  63:Ourwares/MailboxTask.c **** 
+  64:Ourwares/MailboxTask.c **** 	/* Save number of mailbox pointers */
+  65:Ourwares/MailboxTask.c **** 	mbxcannum[pctl->canidx].arraysizemax = arraysize; // Max
+  66:Ourwares/MailboxTask.c **** 
+  67:Ourwares/MailboxTask.c **** 	/* Start with no mailboxes created. */
+  68:Ourwares/MailboxTask.c **** 	mbxcannum[pctl->canidx].arraysizecur = 0;
+  69:Ourwares/MailboxTask.c **** 
+  70:Ourwares/MailboxTask.c **** 	/* What is important to return a non-NULL pointer to show success. */
+  71:Ourwares/MailboxTask.c **** taskEXIT_CRITICAL();
+  72:Ourwares/MailboxTask.c **** 	return &mbxcannum[pctl->canidx];
+  73:Ourwares/MailboxTask.c **** }
+  74:Ourwares/MailboxTask.c **** /* *************************************************************************
+  75:Ourwares/MailboxTask.c ****  *  struct CANNOTIFYLIST* MailboxTask_disable_notifications(struct MAILBOXCAN* pmbx);
+  76:Ourwares/MailboxTask.c ****  *  struct CANNOTIFYLIST* MailboxTask_enable_notifications (struct MAILBOXCAN* pmbx);
+  77:Ourwares/MailboxTask.c ****  *	@brief	: Disable, enable mailbox notifications
+  78:Ourwares/MailboxTask.c ****  * @param	: pmbx = pointer to mailbox
+  79:Ourwares/MailboxTask.c ****  * @return	: Pointer to notification block, for calling task; NULL = task not found
+  80:Ourwares/MailboxTask.c ****  * *************************************************************************/
+  81:Ourwares/MailboxTask.c **** static struct CANNOTIFYLIST* noteskip(struct MAILBOXCAN* pmbx, uint8_t skip)
+  82:Ourwares/MailboxTask.c **** {
+  83:Ourwares/MailboxTask.c **** 	osThreadId tskhandle = xTaskGetCurrentTaskHandle();
+  84:Ourwares/MailboxTask.c **** 	struct CANNOTIFYLIST* pnotetmp;	
+  85:Ourwares/MailboxTask.c **** 	struct CANNOTIFYLIST* pnotex;	
+  86:Ourwares/MailboxTask.c **** 
+  87:Ourwares/MailboxTask.c **** 	// Traverse linked list to find task
+ARM GAS  /tmp/cch3qXt2.s 			page 3
+
+
+  88:Ourwares/MailboxTask.c **** 	pnotetmp = pmbx->pnote;	// Ptr to head of list
+  89:Ourwares/MailboxTask.c **** 	if (pnotetmp == NULL) return NULL; // No notifications setup!
+  90:Ourwares/MailboxTask.c **** 	do 
+  91:Ourwares/MailboxTask.c **** 	{
+  92:Ourwares/MailboxTask.c **** 		if (tskhandle == pnotetmp->tskhandle)
+  93:Ourwares/MailboxTask.c **** 		{ // Notification for "this" task found
+  94:Ourwares/MailboxTask.c **** 			pnotetmp->skip = skip; // Update 'skip' flag
+  95:Ourwares/MailboxTask.c **** 			return pnotetmp; // Ptr to notification struct
+  96:Ourwares/MailboxTask.c **** 		}
+  97:Ourwares/MailboxTask.c **** 			pnotex   = pnotetmp;
+  98:Ourwares/MailboxTask.c **** 			pnotetmp = pnotetmp->pnext;
+  99:Ourwares/MailboxTask.c **** 	} while (pnotetmp != pnotex);
+ 100:Ourwares/MailboxTask.c **** 	return NULL; // Here, the current running task not found
+ 101:Ourwares/MailboxTask.c **** }
+ 102:Ourwares/MailboxTask.c **** struct CANNOTIFYLIST* MailboxTask_disable_notifications(struct MAILBOXCAN* pmbx)
+ 103:Ourwares/MailboxTask.c **** {
+ 104:Ourwares/MailboxTask.c **** 	return noteskip(pmbx, 1);
+ 105:Ourwares/MailboxTask.c **** }
+ 106:Ourwares/MailboxTask.c **** struct CANNOTIFYLIST* MailboxTask_enable_notifications(struct MAILBOXCAN* pmbx)
+ 107:Ourwares/MailboxTask.c **** {
+ 108:Ourwares/MailboxTask.c **** 	return noteskip(pmbx, 0);
+ 109:Ourwares/MailboxTask.c **** }
+ 110:Ourwares/MailboxTask.c **** 
+ 111:Ourwares/MailboxTask.c **** /* *************************************************************************
+ 112:Ourwares/MailboxTask.c ****  * struct MAILBOXCAN* MailboxTask_add(struct CAN_CTLBLOCK* pctl,\
+ 113:Ourwares/MailboxTask.c **** 		 uint32_t canid,\
+ 114:Ourwares/MailboxTask.c ****        osThreadId tskhandle,\
+ 115:Ourwares/MailboxTask.c **** 		 uint32_t notebit,\
+ 116:Ourwares/MailboxTask.c **** 		 uint8_t noteskip,\
+ 117:Ourwares/MailboxTask.c **** 		 uint8_t paytype);
+ 118:Ourwares/MailboxTask.c ****  *	@brief	: Add a mailbox, given CAN control block ptr, and other stuff
+ 119:Ourwares/MailboxTask.c ****  * @param	: pctl = Pointer to CAN control block, i.e. CAN module/CAN bus, for mailbox
+ 120:Ourwares/MailboxTask.c ****  * @param	: canid = CAN ID
+ 121:Ourwares/MailboxTask.c ****  * @param	: tskhandle = Task handle; NULL for use current task; 
+ 122:Ourwares/MailboxTask.c ****  * @param	: notebit = notification bit; NULL = no notification
+ 123:Ourwares/MailboxTask.c ****  * @paran	: noteskip = notify = 0; skip notification = 1;
+ 124:Ourwares/MailboxTask.c ****  * @param	: paytype = payload type code (see 'PAYLOAD_TYPE_INSERT.sql' in 'GliderWinchCommons/embed
+ 125:Ourwares/MailboxTask.c ****  * @return	: Pointer to mailbox; NULL = failed
+ 126:Ourwares/MailboxTask.c ****  * *************************************************************************/
+ 127:Ourwares/MailboxTask.c **** struct MAILBOXCAN* MailboxTask_add(struct CAN_CTLBLOCK* pctl,\
+ 128:Ourwares/MailboxTask.c **** 		 uint32_t canid,\
+ 129:Ourwares/MailboxTask.c ****        osThreadId tskhandle,\
+ 130:Ourwares/MailboxTask.c **** 		 uint32_t notebit,\
+ 131:Ourwares/MailboxTask.c **** 		 uint8_t noteskip,\
+ 132:Ourwares/MailboxTask.c **** 		 uint8_t paytype)
+ 133:Ourwares/MailboxTask.c **** {
+ 134:Ourwares/MailboxTask.c **** 	int j;
+ 135:Ourwares/MailboxTask.c **** 	struct MAILBOXCAN* pmbx;
+ 136:Ourwares/MailboxTask.c **** 	struct CANNOTIFYLIST* pnotex;
+ 137:Ourwares/MailboxTask.c **** 	struct CANNOTIFYLIST* pnotetmp;
+ 138:Ourwares/MailboxTask.c **** 	struct MAILBOXCAN** ppmbx;
+ 139:Ourwares/MailboxTask.c **** 
+ 140:Ourwares/MailboxTask.c **** 	/* Check that the bozo programmer got the prior initializations done correctly. */
+ 141:Ourwares/MailboxTask.c **** 	if (canid == 0)    return NULL;
+ 142:Ourwares/MailboxTask.c **** 	if (pctl  == NULL) return NULL;
+ 143:Ourwares/MailboxTask.c **** 	if (pctl->canidx >= STM32MAXCANNUM) return NULL;
+ 144:Ourwares/MailboxTask.c **** 	if (mbxcannum[pctl->canidx].pctl == NULL) return NULL;
+ARM GAS  /tmp/cch3qXt2.s 			page 4
+
+
+ 145:Ourwares/MailboxTask.c **** 
+ 146:Ourwares/MailboxTask.c **** 	if (tskhandle == NULL)
+ 147:Ourwares/MailboxTask.c **** 		tskhandle = xTaskGetCurrentTaskHandle();
+ 148:Ourwares/MailboxTask.c **** 
+ 149:Ourwares/MailboxTask.c **** 	/* Pointer to beginning of array of mailbox pointers. */
+ 150:Ourwares/MailboxTask.c **** 	ppmbx = mbxcannum[pctl->canidx].pmbxarray;
+ 151:Ourwares/MailboxTask.c **** 
+ 152:Ourwares/MailboxTask.c **** taskENTER_CRITICAL();
+ 153:Ourwares/MailboxTask.c **** 
+ 154:Ourwares/MailboxTask.c **** 	/* We are working with the array of pointers to mailboxes. */
+ 155:Ourwares/MailboxTask.c **** 	// Check if this 'canid' has a mailbox
+ 156:Ourwares/MailboxTask.c **** 	for (j = 0; j < mbxcannum[pctl->canidx].arraysizecur; j++)
+ 157:Ourwares/MailboxTask.c **** 	{
+ 158:Ourwares/MailboxTask.c **** 		pmbx = *(ppmbx+j);  // Get pointer to a mailbox from array of pointers
+ 159:Ourwares/MailboxTask.c **** 		if (pmbx == NULL) morse_trap(20); // jic|debug
+ 160:Ourwares/MailboxTask.c **** 		if (pmbx->ncan.can.id == canid)
+ 161:Ourwares/MailboxTask.c **** 		{ // Here, CAN id already has a mailbox, so a notification must be wanted by this task
+ 162:Ourwares/MailboxTask.c **** 			if (notebit != 0)
+ 163:Ourwares/MailboxTask.c **** 			{ // Here add a notification to the existing mailbox
+ 164:Ourwares/MailboxTask.c **** 
+ 165:Ourwares/MailboxTask.c **** 				/* Get a notification block. */
+ 166:Ourwares/MailboxTask.c **** 				pnotex = (struct CANNOTIFYLIST*)calloc(1, sizeof(struct CANNOTIFYLIST));
+ 167:Ourwares/MailboxTask.c **** 				if (pnotex == NULL){ taskEXIT_CRITICAL();return NULL;}
+ 168:Ourwares/MailboxTask.c **** 
+ 169:Ourwares/MailboxTask.c **** 				/* Check if this mailbox has any notifications */
+ 170:Ourwares/MailboxTask.c **** 				if (pmbx->pnote == NULL)
+ 171:Ourwares/MailboxTask.c **** 				{ // This is the first notification for this mailbox.
+ 172:Ourwares/MailboxTask.c **** 					pmbx->pnote       = pnotex;   // Mailbox points to first notification
+ 173:Ourwares/MailboxTask.c **** 					pnotex->pnext     = pnotex;	// Last on list points to self
+ 174:Ourwares/MailboxTask.c **** 					pnotex->tskhandle = tskhandle;
+ 175:Ourwares/MailboxTask.c ****  					pnotex->notebit   = notebit;  // Notification bit to use
+ 176:Ourwares/MailboxTask.c **** 					pnotex->skip      = noteskip; // Skip notification flag
+ 177:Ourwares/MailboxTask.c **** 					/* Here, there is no need to sort array on CANID for a binary lookup
+ 178:Ourwares/MailboxTask.c **** 						since a new mailbox was not added. */
+ 179:Ourwares/MailboxTask.c **** 					taskEXIT_CRITICAL();
+ 180:Ourwares/MailboxTask.c **** 					return pmbx;
+ 181:Ourwares/MailboxTask.c **** 				}
+ 182:Ourwares/MailboxTask.c **** 				else
+ 183:Ourwares/MailboxTask.c **** 				{ // Here, one of more notifications.  Add to list.
+ 184:Ourwares/MailboxTask.c **** 					/* Seach end of list */
+ 185:Ourwares/MailboxTask.c **** 					pnotetmp = pmbx->pnote;
+ 186:Ourwares/MailboxTask.c **** 					while (pnotetmp != pnotetmp->pnext) pnotetmp = pnotetmp->pnext;
+ 187:Ourwares/MailboxTask.c **** 
+ 188:Ourwares/MailboxTask.c **** 					/* Add to list and initialize. */
+ 189:Ourwares/MailboxTask.c **** 					pnotetmp->pnext   = pnotex; // End block now points to new block
+ 190:Ourwares/MailboxTask.c **** 					pnotex->pnext     = pnotex; // New block points to self
+ 191:Ourwares/MailboxTask.c **** 					pnotex->tskhandle = tskhandle;
+ 192:Ourwares/MailboxTask.c ****  					pnotex->notebit   = notebit;  // Notification bit to use
+ 193:Ourwares/MailboxTask.c **** 					pnotex->skip      = noteskip; // Skip notification flag
+ 194:Ourwares/MailboxTask.c **** 					/* Here, there is no need to sort array on CANID for a binary lookup
+ 195:Ourwares/MailboxTask.c **** 						since a new mailbox was not added. */
+ 196:Ourwares/MailboxTask.c **** 					taskEXIT_CRITICAL();
+ 197:Ourwares/MailboxTask.c **** 					return pmbx;
+ 198:Ourwares/MailboxTask.c **** 				}
+ 199:Ourwares/MailboxTask.c **** 			}
+ 200:Ourwares/MailboxTask.c **** 			/* Here, no notification bit, but CAN id already has a mailbox!
+ 201:Ourwares/MailboxTask.c ****             Either the canid is wrong, or this call was not necessary. */
+ARM GAS  /tmp/cch3qXt2.s 			page 5
+
+
+ 202:Ourwares/MailboxTask.c **** 			taskEXIT_CRITICAL();
+ 203:Ourwares/MailboxTask.c **** 			return NULL;
+ 204:Ourwares/MailboxTask.c **** 		}
+ 205:Ourwares/MailboxTask.c **** 	}
+ 206:Ourwares/MailboxTask.c **** 
+ 207:Ourwares/MailboxTask.c **** 	/* Here, a mailbox for 'canid' was not found in the list.  
+ 208:Ourwares/MailboxTask.c ****       Or, this is the first mailbox created.                  
+ 209:Ourwares/MailboxTask.c **** 
+ 210:Ourwares/MailboxTask.c ****       Create a mailbox for this canid                         */
+ 211:Ourwares/MailboxTask.c **** 
+ 212:Ourwares/MailboxTask.c **** 	// Point to next available location in array of mailbox pointers.
+ 213:Ourwares/MailboxTask.c ****    //                 pointer to beginning   + number of entries
+ 214:Ourwares/MailboxTask.c **** 	ppmbx = mbxcannum[pctl->canidx].pmbxarray + mbxcannum[pctl->canidx].arraysizecur;
+ 215:Ourwares/MailboxTask.c **** 
+ 216:Ourwares/MailboxTask.c **** 	/* Create one mailbox */
+ 217:Ourwares/MailboxTask.c **** 	pmbx = (struct MAILBOXCAN*)calloc(1, sizeof(struct MAILBOXCAN));
+ 218:Ourwares/MailboxTask.c **** 	if (pmbx == NULL){ taskEXIT_CRITICAL();return NULL;}
+ 219:Ourwares/MailboxTask.c **** 
+ 220:Ourwares/MailboxTask.c **** 	pmbx->ctr   = 0;       // Redundant (calloc set it zero)
+ 221:Ourwares/MailboxTask.c **** 	pmbx->pnote = NULL;    // Redundant (calloc set it zero)
+ 222:Ourwares/MailboxTask.c **** 	pmbx->ncan. can.id = canid;   // Save CAN id
+ 223:Ourwares/MailboxTask.c **** 	pmbx->ncan.toa     = DTWTIME; // Set current time for initial time-of-arrival
+ 224:Ourwares/MailboxTask.c **** 
+ 225:Ourwares/MailboxTask.c **** 	if (notebit != 0)
+ 226:Ourwares/MailboxTask.c **** 	{ // Here, a notification is requested.  Add first instance of notification  
+ 227:Ourwares/MailboxTask.c **** 		pnotex = (struct CANNOTIFYLIST*)calloc(1, sizeof(struct CANNOTIFYLIST));
+ 228:Ourwares/MailboxTask.c **** 		if (pnotex == NULL){ taskEXIT_CRITICAL();return NULL;}
+ 229:Ourwares/MailboxTask.c **** 
+ 230:Ourwares/MailboxTask.c **** 		pmbx->pnote       = pnotex; // Mailbox points to first notification
+ 231:Ourwares/MailboxTask.c **** 		pnotex->pnext     = pnotex;	// Last on list points to self
+ 232:Ourwares/MailboxTask.c **** 		pnotex->tskhandle = tskhandle; // Task to notify
+ 233:Ourwares/MailboxTask.c **** 		pnotex->notebit   = notebit;  // Notification bit to use
+ 234:Ourwares/MailboxTask.c **** 		pnotex->skip      = noteskip; // Skip notification flag
+ 235:Ourwares/MailboxTask.c **** 	}
+ 236:Ourwares/MailboxTask.c **** 
+ 237:Ourwares/MailboxTask.c **** // TODO: Sort pointers for new Mailbox if later binary lookup on CAN ID.
+ 238:Ourwares/MailboxTask.c **** 
+ 239:Ourwares/MailboxTask.c **** taskEXIT_CRITICAL();
+ 240:Ourwares/MailboxTask.c **** 	return pmbx;
+ 241:Ourwares/MailboxTask.c **** }
+ 242:Ourwares/MailboxTask.c **** 
+ 243:Ourwares/MailboxTask.c **** /* *************************************************************************
+ 244:Ourwares/MailboxTask.c ****  * osThreadId xMailboxTaskCreate(uint32_t taskpriority);
+ 245:Ourwares/MailboxTask.c ****  * @brief	: Create task; task handle created is global for all to enjoy!
+ 246:Ourwares/MailboxTask.c ****  * @param	: taskpriority = Task priority (just as it says!)
+ 247:Ourwares/MailboxTask.c ****  * @return	: QueueHandle_t = queue handle
+ 248:Ourwares/MailboxTask.c ****  * *************************************************************************/
+ 249:Ourwares/MailboxTask.c **** osThreadId xMailboxTaskCreate(uint32_t taskpriority)
+ 250:Ourwares/MailboxTask.c **** {
+ 251:Ourwares/MailboxTask.c ****  /* definition and creation of CanTask */
+ 252:Ourwares/MailboxTask.c ****   osThreadDef(MailboxTask, StartMailboxTask, osPriorityNormal, 0, 256);
+ 253:Ourwares/MailboxTask.c **** 
+ 254:Ourwares/MailboxTask.c ****   MailboxTaskHandle = osThreadCreate(osThread(MailboxTask), NULL);
+ 255:Ourwares/MailboxTask.c **** 
+ 256:Ourwares/MailboxTask.c **** 	vTaskPrioritySet( MailboxTaskHandle, taskpriority );
+ 257:Ourwares/MailboxTask.c **** 	return MailboxTaskHandle;
+ 258:Ourwares/MailboxTask.c **** }
+ARM GAS  /tmp/cch3qXt2.s 			page 6
+
+
+ 259:Ourwares/MailboxTask.c **** /* *************************************************************************
+ 260:Ourwares/MailboxTask.c ****  * void StartMailboxTask(void const * argument);
+ 261:Ourwares/MailboxTask.c ****  *	@brief	: Task startup
+ 262:Ourwares/MailboxTask.c ****  * *************************************************************************/
+ 263:Ourwares/MailboxTask.c **** void StartMailboxTask(void const * argument)
+ 264:Ourwares/MailboxTask.c **** {
+ 265:Ourwares/MailboxTask.c **** 	struct MAILBOXCANNUM* pmbxnum;
+ 266:Ourwares/MailboxTask.c **** 	struct CANRCVBUFN* pncan;
+ 267:Ourwares/MailboxTask.c **** 	struct CANTAKEPTR* ptake[STM32MAXCANNUM];
+ 268:Ourwares/MailboxTask.c **** 	int i;
+ 269:Ourwares/MailboxTask.c **** 	int8_t flag;
+ 270:Ourwares/MailboxTask.c **** 
+ 271:Ourwares/MailboxTask.c **** //while(1==1) osDelay(10); // Debug: make task do nothing
+ 272:Ourwares/MailboxTask.c **** 
+ 273:Ourwares/MailboxTask.c **** 	/* Get circular buffer pointers for each CAN module in list. */	
+ 274:Ourwares/MailboxTask.c **** 	for (i = 0; i < STM32MAXCANNUM; i++)
+ 275:Ourwares/MailboxTask.c **** 	{
+ 276:Ourwares/MailboxTask.c **** 		if (mbxcannum[i].pmbxarray != NULL)
+ 277:Ourwares/MailboxTask.c **** 		{ // Here, array of pointers was initialized
+ 278:Ourwares/MailboxTask.c **** 			ptake[i] = can_iface_mbx_init(mbxcannum[i].pctl, NULL, (1 << i));
+ 279:Ourwares/MailboxTask.c **** 			if (ptake[i] == NULL) morse_trap(22);
+ 280:Ourwares/MailboxTask.c **** 		}
+ 281:Ourwares/MailboxTask.c **** 	}
+ 282:Ourwares/MailboxTask.c **** 
+ 283:Ourwares/MailboxTask.c **** 	/* A notification copies the internal notification word to this. */
+ 284:Ourwares/MailboxTask.c **** 	uint32_t noteval = 0;    // Receives notification word upon an API notify
+ 285:Ourwares/MailboxTask.c **** 
+ 286:Ourwares/MailboxTask.c **** 	/* notification bits processed after a 'Wait. */
+ 287:Ourwares/MailboxTask.c **** 	uint32_t noteused = 0;
+ 288:Ourwares/MailboxTask.c **** 
+ 289:Ourwares/MailboxTask.c ****   /* Infinite MailboxTask loop */
+ 290:Ourwares/MailboxTask.c ****   for(;;)
+ 291:Ourwares/MailboxTask.c ****   {
+ 292:Ourwares/MailboxTask.c **** 		/* Wait for a CAN module to load its circular buffer. */
+ 293:Ourwares/MailboxTask.c **** 		/* The notification bit identifies the CAN module. */
+ 294:Ourwares/MailboxTask.c **** 		xTaskNotifyWait(noteused, 0, &noteval, portMAX_DELAY);
+ 295:Ourwares/MailboxTask.c **** 		noteused = 0;	// Accumulate bits in 'noteval' processed.
+ 296:Ourwares/MailboxTask.c **** 
+ 297:Ourwares/MailboxTask.c **** 		/* Step through possible notification bits */
+ 298:Ourwares/MailboxTask.c **** 		for (i = 0; i < STM32MAXCANNUM; i++)
+ 299:Ourwares/MailboxTask.c **** 		{
+ 300:Ourwares/MailboxTask.c **** 			flag = 0;
+ 301:Ourwares/MailboxTask.c **** 			if ((noteval & (1 << i)) != 0)
+ 302:Ourwares/MailboxTask.c **** 			{	
+ 303:Ourwares/MailboxTask.c **** 				noteused |= (1 << i);
+ 304:Ourwares/MailboxTask.c **** 				pmbxnum = &mbxcannum[i]; // Pt to CAN module mailbox control block
+ 305:Ourwares/MailboxTask.c **** if (pmbxnum == NULL) morse_trap(77); // Debug trap
+ 306:Ourwares/MailboxTask.c **** 				do
+ 307:Ourwares/MailboxTask.c **** 				{
+ 308:Ourwares/MailboxTask.c **** 					/* Get a pointer to the circular buffer w CAN msgs. */
+ 309:Ourwares/MailboxTask.c **** 					pncan = can_iface_get_CANmsg(pmbxnum->ptake);
+ 310:Ourwares/MailboxTask.c **** 
+ 311:Ourwares/MailboxTask.c **** 					if (pncan != NULL)
+ 312:Ourwares/MailboxTask.c **** 					{ // Here, CAN msg is available
+ 313:Ourwares/MailboxTask.c **** 						flag = 1;
+ 314:Ourwares/MailboxTask.c **** 						loadmbx(pmbxnum, pncan); // Load mailbox. if CANID is in list
+ 315:Ourwares/MailboxTask.c **** 					}
+ARM GAS  /tmp/cch3qXt2.s 			page 7
+
+
+ 316:Ourwares/MailboxTask.c **** 				} while (pncan != NULL);
+ 317:Ourwares/MailboxTask.c **** 
+ 318:Ourwares/MailboxTask.c **** 				/* Notify GatewayTask that one or more CAN msgs in circular buffer. */
+ 319:Ourwares/MailboxTask.c **** 				if ( (GatewayTaskHandle != NULL) && ((noteval & (1 << i)) != 0) && (flag != 0) )
+ 320:Ourwares/MailboxTask.c **** 				{
+ 321:Ourwares/MailboxTask.c **** 					xTaskNotify(GatewayTaskHandle, (1 << i), eSetBits);
+ 322:Ourwares/MailboxTask.c **** 				}
+ 323:Ourwares/MailboxTask.c **** 			}
+ 324:Ourwares/MailboxTask.c **** 		}
+ 325:Ourwares/MailboxTask.c ****   }
+ 326:Ourwares/MailboxTask.c **** }
+ 327:Ourwares/MailboxTask.c **** /* *************************************************************************
+ 328:Ourwares/MailboxTask.c ****  * static struct MAILBOXCAN* lookup(struct MAILBOXCANNUM* pmbxnum, struct CANRCVBUFN* pncan);
+ 329:Ourwares/MailboxTask.c ****  *	@brief	: (Bonehead) Lookup CAN ID by a straight pass down the array of mailbox pointers
+ 330:Ourwares/MailboxTask.c ****  * @param	: pmbxnum = pointer to mailbox control block
+ 331:Ourwares/MailboxTask.c ****  * @param	: pncan = pointer to CAN msg in can_face.c circular buffer
+ 332:Ourwares/MailboxTask.c ****  * *************************************************************************/
+ 333:Ourwares/MailboxTask.c **** static struct MAILBOXCAN* lookup(struct MAILBOXCANNUM* pmbxnum, struct CANRCVBUFN* pncan)
+ 334:Ourwares/MailboxTask.c **** {
+  29              		.loc 1 334 0
+  30              		.cfi_startproc
+  31              		@ args = 0, pretend = 0, frame = 0
+  32              		@ frame_needed = 0, uses_anonymous_args = 0
+  33              		@ link register save eliminated.
+  34              	.LVL0:
+  35 0000 70B4     		push	{r4, r5, r6}
+  36              	.LCFI0:
+  37              		.cfi_def_cfa_offset 12
+  38              		.cfi_offset 4, -12
+  39              		.cfi_offset 5, -8
+  40              		.cfi_offset 6, -4
+ 335:Ourwares/MailboxTask.c **** 	struct MAILBOXCAN** ppmbx;
+ 336:Ourwares/MailboxTask.c **** 	struct MAILBOXCAN*   pmbx;
+ 337:Ourwares/MailboxTask.c **** 	int i;
+ 338:Ourwares/MailboxTask.c **** 
+ 339:Ourwares/MailboxTask.c **** 	ppmbx = pmbxnum->pmbxarray;
+  41              		.loc 1 339 0
+  42 0002 4668     		ldr	r6, [r0, #4]
+  43              	.LVL1:
+ 340:Ourwares/MailboxTask.c **** 	for (i = 0; i < pmbxnum->arraysizecur; i++)
+  44              		.loc 1 340 0
+  45 0004 0023     		movs	r3, #0
+  46 0006 06E0     		b	.L2
+  47              	.LVL2:
+  48              	.L4:
+ 341:Ourwares/MailboxTask.c **** 	{
+ 342:Ourwares/MailboxTask.c **** 		pmbx = *(ppmbx + i); // Point to mailbox[i]
+  49              		.loc 1 342 0
+  50 0008 56F82320 		ldr	r2, [r6, r3, lsl #2]
+  51              	.LVL3:
+ 343:Ourwares/MailboxTask.c **** 		if (pmbx->ncan.can.id == pncan->can.id)
+  52              		.loc 1 343 0
+  53 000c 1568     		ldr	r5, [r2]
+  54 000e 0C68     		ldr	r4, [r1]
+  55 0010 A542     		cmp	r5, r4
+  56 0012 05D0     		beq	.L5
+ 340:Ourwares/MailboxTask.c **** 	for (i = 0; i < pmbxnum->arraysizecur; i++)
+ARM GAS  /tmp/cch3qXt2.s 			page 8
+
+
+  57              		.loc 1 340 0 discriminator 2
+  58 0014 0133     		adds	r3, r3, #1
+  59              	.LVL4:
+  60              	.L2:
+ 340:Ourwares/MailboxTask.c **** 	for (i = 0; i < pmbxnum->arraysizecur; i++)
+  61              		.loc 1 340 0 is_stmt 0 discriminator 1
+  62 0016 428A     		ldrh	r2, [r0, #18]
+  63 0018 9342     		cmp	r3, r2
+  64 001a F5DB     		blt	.L4
+ 344:Ourwares/MailboxTask.c **** 		{ // Here, found!
+ 345:Ourwares/MailboxTask.c **** 			return pmbx;
+ 346:Ourwares/MailboxTask.c **** 		}
+ 347:Ourwares/MailboxTask.c **** 	}
+ 348:Ourwares/MailboxTask.c **** 	return NULL;
+  65              		.loc 1 348 0 is_stmt 1
+  66 001c 0020     		movs	r0, #0
+  67              	.LVL5:
+  68 001e 00E0     		b	.L3
+  69              	.LVL6:
+  70              	.L5:
+ 345:Ourwares/MailboxTask.c **** 		}
+  71              		.loc 1 345 0
+  72 0020 1046     		mov	r0, r2
+  73              	.LVL7:
+  74              	.L3:
+ 349:Ourwares/MailboxTask.c **** }
+  75              		.loc 1 349 0
+  76 0022 70BC     		pop	{r4, r5, r6}
+  77              	.LCFI1:
+  78              		.cfi_restore 6
+  79              		.cfi_restore 5
+  80              		.cfi_restore 4
+  81              		.cfi_def_cfa_offset 0
+  82              	.LVL8:
+  83 0024 7047     		bx	lr
+  84              		.cfi_endproc
+  85              	.LFE136:
+  87 0026 00BF     		.section	.text.noteskip,"ax",%progbits
+  88              		.align	2
+  89              		.thumb
+  90              		.thumb_func
+  92              	noteskip:
+  93              	.LFB130:
+  82:Ourwares/MailboxTask.c **** 	osThreadId tskhandle = xTaskGetCurrentTaskHandle();
+  94              		.loc 1 82 0
+  95              		.cfi_startproc
+  96              		@ args = 0, pretend = 0, frame = 0
+  97              		@ frame_needed = 0, uses_anonymous_args = 0
+  98              	.LVL9:
+  99 0000 38B5     		push	{r3, r4, r5, lr}
+ 100              	.LCFI2:
+ 101              		.cfi_def_cfa_offset 16
+ 102              		.cfi_offset 3, -16
+ 103              		.cfi_offset 4, -12
+ 104              		.cfi_offset 5, -8
+ 105              		.cfi_offset 14, -4
+ 106 0002 0446     		mov	r4, r0
+ARM GAS  /tmp/cch3qXt2.s 			page 9
+
+
+ 107 0004 0D46     		mov	r5, r1
+  83:Ourwares/MailboxTask.c **** 	struct CANNOTIFYLIST* pnotetmp;	
+ 108              		.loc 1 83 0
+ 109 0006 FFF7FEFF 		bl	xTaskGetCurrentTaskHandle
+ 110              	.LVL10:
+  88:Ourwares/MailboxTask.c **** 	if (pnotetmp == NULL) return NULL; // No notifications setup!
+ 111              		.loc 1 88 0
+ 112 000a 236B     		ldr	r3, [r4, #48]
+ 113              	.LVL11:
+  89:Ourwares/MailboxTask.c **** 	do 
+ 114              		.loc 1 89 0
+ 115 000c 0BB9     		cbnz	r3, .L10
+ 116 000e 0BE0     		b	.L11
+ 117              	.LVL12:
+ 118              	.L12:
+  98:Ourwares/MailboxTask.c **** 	} while (pnotetmp != pnotex);
+ 119              		.loc 1 98 0
+ 120 0010 1346     		mov	r3, r2
+ 121              	.LVL13:
+ 122              	.L10:
+  92:Ourwares/MailboxTask.c **** 		{ // Notification for "this" task found
+ 123              		.loc 1 92 0
+ 124 0012 5A68     		ldr	r2, [r3, #4]
+ 125 0014 9042     		cmp	r0, r2
+ 126 0016 02D1     		bne	.L9
+  94:Ourwares/MailboxTask.c **** 			return pnotetmp; // Ptr to notification struct
+ 127              		.loc 1 94 0
+ 128 0018 1D73     		strb	r5, [r3, #12]
+  95:Ourwares/MailboxTask.c **** 		}
+ 129              		.loc 1 95 0
+ 130 001a 1846     		mov	r0, r3
+ 131              	.LVL14:
+ 132 001c 38BD     		pop	{r3, r4, r5, pc}
+ 133              	.LVL15:
+ 134              	.L9:
+  98:Ourwares/MailboxTask.c **** 	} while (pnotetmp != pnotex);
+ 135              		.loc 1 98 0
+ 136 001e 1A68     		ldr	r2, [r3]
+ 137              	.LVL16:
+  99:Ourwares/MailboxTask.c **** 	return NULL; // Here, the current running task not found
+ 138              		.loc 1 99 0
+ 139 0020 9342     		cmp	r3, r2
+ 140 0022 F5D1     		bne	.L12
+ 100:Ourwares/MailboxTask.c **** }
+ 141              		.loc 1 100 0
+ 142 0024 0020     		movs	r0, #0
+ 143              	.LVL17:
+ 144 0026 38BD     		pop	{r3, r4, r5, pc}
+ 145              	.LVL18:
+ 146              	.L11:
+  89:Ourwares/MailboxTask.c **** 	do 
+ 147              		.loc 1 89 0
+ 148 0028 0020     		movs	r0, #0
+ 149              	.LVL19:
+ 101:Ourwares/MailboxTask.c **** struct CANNOTIFYLIST* MailboxTask_disable_notifications(struct MAILBOXCAN* pmbx)
+ 150              		.loc 1 101 0
+ 151 002a 38BD     		pop	{r3, r4, r5, pc}
+ARM GAS  /tmp/cch3qXt2.s 			page 10
+
+
+ 152              		.cfi_endproc
+ 153              	.LFE130:
+ 155              		.section	.text.loadmbx,"ax",%progbits
+ 156              		.align	2
+ 157              		.thumb
+ 158              		.thumb_func
+ 160              	loadmbx:
+ 161              	.LFB137:
+ 350:Ourwares/MailboxTask.c **** 
+ 351:Ourwares/MailboxTask.c **** /* ************************************************************************* 
+ 352:Ourwares/MailboxTask.c ****  * static struct MAILBOXCAN loadmbx(struct MAILBOXCANNUM* pmbxnum, struct CANRCVBUFN* pncan);
+ 353:Ourwares/MailboxTask.c ****  *	@brief	: Lookup CAN ID and load mailbox with extract payload reading(s)
+ 354:Ourwares/MailboxTask.c ****  * @param	: pmbxnum = pointer to mailbox control block
+ 355:Ourwares/MailboxTask.c ****  * @param	: pncan = pointer to CAN msg in can_face.c circular buffer
+ 356:Ourwares/MailboxTask.c ****  * *************************************************************************/
+ 357:Ourwares/MailboxTask.c **** static struct MAILBOXCAN* loadmbx(struct MAILBOXCANNUM* pmbxnum, struct CANRCVBUFN* pncan)
+ 358:Ourwares/MailboxTask.c **** {
+ 162              		.loc 1 358 0
+ 163              		.cfi_startproc
+ 164              		@ args = 0, pretend = 0, frame = 8
+ 165              		@ frame_needed = 0, uses_anonymous_args = 0
+ 166              	.LVL20:
+ 167 0000 30B5     		push	{r4, r5, lr}
+ 168              	.LCFI3:
+ 169              		.cfi_def_cfa_offset 12
+ 170              		.cfi_offset 4, -12
+ 171              		.cfi_offset 5, -8
+ 172              		.cfi_offset 14, -4
+ 173 0002 85B0     		sub	sp, sp, #20
+ 174              	.LCFI4:
+ 175              		.cfi_def_cfa_offset 32
+ 176 0004 0C46     		mov	r4, r1
+ 359:Ourwares/MailboxTask.c **** 	struct CANNOTIFYLIST* pnotetmp;	
+ 360:Ourwares/MailboxTask.c **** 	struct CANNOTIFYLIST* pnotex;
+ 361:Ourwares/MailboxTask.c **** 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+ 177              		.loc 1 361 0
+ 178 0006 0023     		movs	r3, #0
+ 179 0008 0393     		str	r3, [sp, #12]
+ 362:Ourwares/MailboxTask.c **** 
+ 363:Ourwares/MailboxTask.c **** 	/* Check if received CAN id is in the mailbox CAN id list. */
+ 364:Ourwares/MailboxTask.c **** 	// 'lookup' is a straight loop; use 'lookupq' for binary search (when implemented)
+ 365:Ourwares/MailboxTask.c **** 	struct MAILBOXCAN* pmbx = lookup(pmbxnum, pncan);
+ 180              		.loc 1 365 0
+ 181 000a FFF7FEFF 		bl	lookup
+ 182              	.LVL21:
+ 366:Ourwares/MailboxTask.c **** 	if (pmbx == NULL) return NULL; // Return: CAN id not in mailbox list
+ 183              		.loc 1 366 0
+ 184 000e C0B1     		cbz	r0, .L18
+ 185 0010 0546     		mov	r5, r0
+ 367:Ourwares/MailboxTask.c **** 
+ 368:Ourwares/MailboxTask.c **** 	/* Here, this CAN msg has a mailbox. */
+ 369:Ourwares/MailboxTask.c **** 	// Copy CAN msg into mailbox, and extract payload
+ 370:Ourwares/MailboxTask.c **** 	payload_extract(pmbx, pncan);
+ 186              		.loc 1 370 0
+ 187 0012 2146     		mov	r1, r4
+ 188 0014 FFF7FEFF 		bl	payload_extract
+ 189              	.LVL22:
+ARM GAS  /tmp/cch3qXt2.s 			page 11
+
+
+ 371:Ourwares/MailboxTask.c **** 
+ 372:Ourwares/MailboxTask.c **** 	/* Execute notifications */
+ 373:Ourwares/MailboxTask.c **** 	pnotetmp = pmbx->pnote; // Get ptr to head of linked list
+ 190              		.loc 1 373 0
+ 191 0018 2C6B     		ldr	r4, [r5, #48]
+ 192              	.LVL23:
+ 374:Ourwares/MailboxTask.c **** 	if (pnotetmp == NULL) return pmbx; // CANID found, but no notifications
+ 193              		.loc 1 374 0
+ 194 001a 0CB9     		cbnz	r4, .L17
+ 195 001c 13E0     		b	.L19
+ 196              	.LVL24:
+ 197              	.L20:
+ 375:Ourwares/MailboxTask.c **** 	
+ 376:Ourwares/MailboxTask.c **** 	// Traverse linked list making notifications
+ 377:Ourwares/MailboxTask.c **** 	do 
+ 378:Ourwares/MailboxTask.c **** 	{
+ 379:Ourwares/MailboxTask.c **** 		/* Make a notification if "not skip" and 'taskhandle and 'notebit' were setup */
+ 380:Ourwares/MailboxTask.c **** 		if ((pnotetmp->skip == 0) && (pnotetmp->tskhandle != NULL) && (pnotetmp->notebit != 0))
+ 381:Ourwares/MailboxTask.c **** 		{
+ 382:Ourwares/MailboxTask.c **** 			xTaskNotifyFromISR(pnotetmp->tskhandle,\
+ 383:Ourwares/MailboxTask.c **** 				pnotetmp->notebit, eSetBits,\
+ 384:Ourwares/MailboxTask.c **** 				&xHigherPriorityTaskWoken );	
+ 385:Ourwares/MailboxTask.c **** 		}
+ 386:Ourwares/MailboxTask.c **** 
+ 387:Ourwares/MailboxTask.c **** 		/* Step to next item in list. */
+ 388:Ourwares/MailboxTask.c **** 			pnotex   = pnotetmp;
+ 389:Ourwares/MailboxTask.c **** 			pnotetmp = pnotetmp->pnext;
+ 198              		.loc 1 389 0
+ 199 001e 1C46     		mov	r4, r3
+ 200              	.LVL25:
+ 201              	.L17:
+ 380:Ourwares/MailboxTask.c **** 		{
+ 202              		.loc 1 380 0
+ 203 0020 237B     		ldrb	r3, [r4, #12]	@ zero_extendqisi2
+ 204 0022 4BB9     		cbnz	r3, .L16
+ 380:Ourwares/MailboxTask.c **** 		{
+ 205              		.loc 1 380 0 is_stmt 0 discriminator 1
+ 206 0024 6068     		ldr	r0, [r4, #4]
+ 207 0026 38B1     		cbz	r0, .L16
+ 380:Ourwares/MailboxTask.c **** 		{
+ 208              		.loc 1 380 0 discriminator 2
+ 209 0028 A168     		ldr	r1, [r4, #8]
+ 210 002a 29B1     		cbz	r1, .L16
+ 382:Ourwares/MailboxTask.c **** 				pnotetmp->notebit, eSetBits,\
+ 211              		.loc 1 382 0 is_stmt 1
+ 212 002c 03AB     		add	r3, sp, #12
+ 213 002e 0093     		str	r3, [sp]
+ 214 0030 0023     		movs	r3, #0
+ 215 0032 0122     		movs	r2, #1
+ 216 0034 FFF7FEFF 		bl	xTaskGenericNotifyFromISR
+ 217              	.LVL26:
+ 218              	.L16:
+ 219              		.loc 1 389 0
+ 220 0038 2368     		ldr	r3, [r4]
+ 221              	.LVL27:
+ 390:Ourwares/MailboxTask.c **** 
+ 391:Ourwares/MailboxTask.c **** 	} while (pnotetmp != pnotex);
+ARM GAS  /tmp/cch3qXt2.s 			page 12
+
+
+ 222              		.loc 1 391 0
+ 223 003a 9C42     		cmp	r4, r3
+ 224 003c EFD1     		bne	.L20
+ 392:Ourwares/MailboxTask.c **** 
+ 393:Ourwares/MailboxTask.c **** 	return pmbx;
+ 225              		.loc 1 393 0
+ 226 003e 2846     		mov	r0, r5
+ 227 0040 02E0     		b	.L15
+ 228              	.LVL28:
+ 229              	.L18:
+ 366:Ourwares/MailboxTask.c **** 
+ 230              		.loc 1 366 0
+ 231 0042 0020     		movs	r0, #0
+ 232              	.LVL29:
+ 233 0044 00E0     		b	.L15
+ 234              	.LVL30:
+ 235              	.L19:
+ 374:Ourwares/MailboxTask.c **** 	
+ 236              		.loc 1 374 0
+ 237 0046 2846     		mov	r0, r5
+ 238              	.LVL31:
+ 239              	.L15:
+ 394:Ourwares/MailboxTask.c **** }
+ 240              		.loc 1 394 0
+ 241 0048 05B0     		add	sp, sp, #20
+ 242              	.LCFI5:
+ 243              		.cfi_def_cfa_offset 12
+ 244              		@ sp needed
+ 245 004a 30BD     		pop	{r4, r5, pc}
+ 246              		.cfi_endproc
+ 247              	.LFE137:
+ 249              		.section	.text.StartMailboxTask,"ax",%progbits
+ 250              		.align	2
+ 251              		.global	StartMailboxTask
+ 252              		.thumb
+ 253              		.thumb_func
+ 255              	StartMailboxTask:
+ 256              	.LFB135:
+ 264:Ourwares/MailboxTask.c **** 	struct MAILBOXCANNUM* pmbxnum;
+ 257              		.loc 1 264 0
+ 258              		.cfi_startproc
+ 259              		@ args = 0, pretend = 0, frame = 8
+ 260              		@ frame_needed = 0, uses_anonymous_args = 0
+ 261              	.LVL32:
+ 262 0000 2DE9F043 		push	{r4, r5, r6, r7, r8, r9, lr}
+ 263              	.LCFI6:
+ 264              		.cfi_def_cfa_offset 28
+ 265              		.cfi_offset 4, -28
+ 266              		.cfi_offset 5, -24
+ 267              		.cfi_offset 6, -20
+ 268              		.cfi_offset 7, -16
+ 269              		.cfi_offset 8, -12
+ 270              		.cfi_offset 9, -8
+ 271              		.cfi_offset 14, -4
+ 272 0004 83B0     		sub	sp, sp, #12
+ 273              	.LCFI7:
+ 274              		.cfi_def_cfa_offset 40
+ARM GAS  /tmp/cch3qXt2.s 			page 13
+
+
+ 275              	.LVL33:
+ 274:Ourwares/MailboxTask.c **** 	{
+ 276              		.loc 1 274 0
+ 277 0006 0024     		movs	r4, #0
+ 278 0008 15E0     		b	.L23
+ 279              	.LVL34:
+ 280              	.L25:
+ 276:Ourwares/MailboxTask.c **** 		{ // Here, array of pointers was initialized
+ 281              		.loc 1 276 0
+ 282 000a 04EB8402 		add	r2, r4, r4, lsl #2
+ 283 000e 9300     		lsls	r3, r2, #2
+ 284 0010 284A     		ldr	r2, .L33
+ 285 0012 1344     		add	r3, r3, r2
+ 286 0014 5B68     		ldr	r3, [r3, #4]
+ 287 0016 6BB1     		cbz	r3, .L24
+ 278:Ourwares/MailboxTask.c **** 			if (ptake[i] == NULL) morse_trap(22);
+ 288              		.loc 1 278 0
+ 289 0018 04EB8402 		add	r2, r4, r4, lsl #2
+ 290 001c 9300     		lsls	r3, r2, #2
+ 291 001e 0122     		movs	r2, #1
+ 292 0020 A240     		lsls	r2, r2, r4
+ 293 0022 0021     		movs	r1, #0
+ 294 0024 2348     		ldr	r0, .L33
+ 295 0026 C058     		ldr	r0, [r0, r3]
+ 296 0028 FFF7FEFF 		bl	can_iface_mbx_init
+ 297              	.LVL35:
+ 279:Ourwares/MailboxTask.c **** 		}
+ 298              		.loc 1 279 0
+ 299 002c 10B9     		cbnz	r0, .L24
+ 279:Ourwares/MailboxTask.c **** 		}
+ 300              		.loc 1 279 0 is_stmt 0 discriminator 1
+ 301 002e 1620     		movs	r0, #22
+ 302 0030 FFF7FEFF 		bl	morse_trap
+ 303              	.LVL36:
+ 304              	.L24:
+ 274:Ourwares/MailboxTask.c **** 	{
+ 305              		.loc 1 274 0 is_stmt 1 discriminator 2
+ 306 0034 0134     		adds	r4, r4, #1
+ 307              	.LVL37:
+ 308              	.L23:
+ 274:Ourwares/MailboxTask.c **** 	{
+ 309              		.loc 1 274 0 is_stmt 0 discriminator 1
+ 310 0036 012C     		cmp	r4, #1
+ 311 0038 E7DD     		ble	.L25
+ 284:Ourwares/MailboxTask.c **** 
+ 312              		.loc 1 284 0 is_stmt 1
+ 313 003a 0023     		movs	r3, #0
+ 314 003c 0193     		str	r3, [sp, #4]
+ 315              	.LVL38:
+ 287:Ourwares/MailboxTask.c **** 
+ 316              		.loc 1 287 0
+ 317 003e 9846     		mov	r8, r3
+ 318              	.LVL39:
+ 319              	.L31:
+ 294:Ourwares/MailboxTask.c **** 		noteused = 0;	// Accumulate bits in 'noteval' processed.
+ 320              		.loc 1 294 0
+ 321 0040 4FF0FF33 		mov	r3, #-1
+ARM GAS  /tmp/cch3qXt2.s 			page 14
+
+
+ 322 0044 01AA     		add	r2, sp, #4
+ 323 0046 0021     		movs	r1, #0
+ 324 0048 4046     		mov	r0, r8
+ 325 004a FFF7FEFF 		bl	xTaskNotifyWait
+ 326              	.LVL40:
+ 295:Ourwares/MailboxTask.c **** 
+ 327              		.loc 1 295 0
+ 328 004e 4FF00008 		mov	r8, #0
+ 298:Ourwares/MailboxTask.c **** 		{
+ 329              		.loc 1 298 0
+ 330 0052 4446     		mov	r4, r8
+ 331 0054 2BE0     		b	.L26
+ 332              	.LVL41:
+ 333              	.L30:
+ 301:Ourwares/MailboxTask.c **** 			{	
+ 334              		.loc 1 301 0
+ 335 0056 0127     		movs	r7, #1
+ 336 0058 A740     		lsls	r7, r7, r4
+ 337 005a 019B     		ldr	r3, [sp, #4]
+ 338 005c 1F42     		tst	r7, r3
+ 339 005e 25D0     		beq	.L27
+ 303:Ourwares/MailboxTask.c **** 				pmbxnum = &mbxcannum[i]; // Pt to CAN module mailbox control block
+ 340              		.loc 1 303 0
+ 341 0060 48EA0708 		orr	r8, r8, r7
+ 342              	.LVL42:
+ 304:Ourwares/MailboxTask.c **** if (pmbxnum == NULL) morse_trap(77); // Debug trap
+ 343              		.loc 1 304 0
+ 344 0064 04EB8402 		add	r2, r4, r4, lsl #2
+ 345 0068 9300     		lsls	r3, r2, #2
+ 346 006a 124D     		ldr	r5, .L33
+ 347 006c 05EB0309 		add	r9, r5, r3
+ 348              	.LVL43:
+ 300:Ourwares/MailboxTask.c **** 			if ((noteval & (1 << i)) != 0)
+ 349              		.loc 1 300 0
+ 350 0070 0026     		movs	r6, #0
+ 351              	.LVL44:
+ 352              	.L29:
+ 309:Ourwares/MailboxTask.c **** 
+ 353              		.loc 1 309 0
+ 354 0072 04EB8402 		add	r2, r4, r4, lsl #2
+ 355 0076 9300     		lsls	r3, r2, #2
+ 356 0078 0E4A     		ldr	r2, .L33
+ 357 007a 1344     		add	r3, r3, r2
+ 358 007c 9868     		ldr	r0, [r3, #8]
+ 359 007e FFF7FEFF 		bl	can_iface_get_CANmsg
+ 360              	.LVL45:
+ 311:Ourwares/MailboxTask.c **** 					{ // Here, CAN msg is available
+ 361              		.loc 1 311 0
+ 362 0082 0546     		mov	r5, r0
+ 363 0084 20B1     		cbz	r0, .L28
+ 364              	.LVL46:
+ 314:Ourwares/MailboxTask.c **** 					}
+ 365              		.loc 1 314 0
+ 366 0086 0146     		mov	r1, r0
+ 367 0088 4846     		mov	r0, r9
+ 368              	.LVL47:
+ 369 008a FFF7FEFF 		bl	loadmbx
+ARM GAS  /tmp/cch3qXt2.s 			page 15
+
+
+ 370              	.LVL48:
+ 313:Ourwares/MailboxTask.c **** 						loadmbx(pmbxnum, pncan); // Load mailbox. if CANID is in list
+ 371              		.loc 1 313 0
+ 372 008e 0126     		movs	r6, #1
+ 373              	.LVL49:
+ 374              	.L28:
+ 316:Ourwares/MailboxTask.c **** 
+ 375              		.loc 1 316 0
+ 376 0090 002D     		cmp	r5, #0
+ 377 0092 EED1     		bne	.L29
+ 319:Ourwares/MailboxTask.c **** 				{
+ 378              		.loc 1 319 0
+ 379 0094 084B     		ldr	r3, .L33+4
+ 380 0096 1868     		ldr	r0, [r3]
+ 381 0098 40B1     		cbz	r0, .L27
+ 319:Ourwares/MailboxTask.c **** 				{
+ 382              		.loc 1 319 0 is_stmt 0 discriminator 1
+ 383 009a 019B     		ldr	r3, [sp, #4]
+ 384 009c 1F42     		tst	r7, r3
+ 385 009e 05D0     		beq	.L27
+ 319:Ourwares/MailboxTask.c **** 				{
+ 386              		.loc 1 319 0 discriminator 2
+ 387 00a0 26B1     		cbz	r6, .L27
+ 321:Ourwares/MailboxTask.c **** 				}
+ 388              		.loc 1 321 0 is_stmt 1
+ 389 00a2 0023     		movs	r3, #0
+ 390 00a4 0122     		movs	r2, #1
+ 391 00a6 3946     		mov	r1, r7
+ 392 00a8 FFF7FEFF 		bl	xTaskGenericNotify
+ 393              	.LVL50:
+ 394              	.L27:
+ 298:Ourwares/MailboxTask.c **** 		{
+ 395              		.loc 1 298 0 discriminator 2
+ 396 00ac 0134     		adds	r4, r4, #1
+ 397              	.LVL51:
+ 398              	.L26:
+ 298:Ourwares/MailboxTask.c **** 		{
+ 399              		.loc 1 298 0 is_stmt 0 discriminator 1
+ 400 00ae 012C     		cmp	r4, #1
+ 401 00b0 D1DD     		ble	.L30
+ 402 00b2 C5E7     		b	.L31
+ 403              	.L34:
+ 404              		.align	2
+ 405              	.L33:
+ 406 00b4 00000000 		.word	.LANCHOR0
+ 407 00b8 00000000 		.word	GatewayTaskHandle
+ 408              		.cfi_endproc
+ 409              	.LFE135:
+ 411              		.section	.text.MailboxTask_add_CANlist,"ax",%progbits
+ 412              		.align	2
+ 413              		.global	MailboxTask_add_CANlist
+ 414              		.thumb
+ 415              		.thumb_func
+ 417              	MailboxTask_add_CANlist:
+ 418              	.LFB129:
+  35:Ourwares/MailboxTask.c **** 	struct MAILBOXCAN** ppmbxarray; // Pointer to array of pointers to mailboxes
+ 419              		.loc 1 35 0 is_stmt 1
+ARM GAS  /tmp/cch3qXt2.s 			page 16
+
+
+ 420              		.cfi_startproc
+ 421              		@ args = 0, pretend = 0, frame = 0
+ 422              		@ frame_needed = 0, uses_anonymous_args = 0
+ 423              	.LVL52:
+  38:Ourwares/MailboxTask.c **** 
+ 424              		.loc 1 38 0
+ 425 0000 0028     		cmp	r0, #0
+ 426 0002 46D0     		beq	.L39
+  35:Ourwares/MailboxTask.c **** 	struct MAILBOXCAN** ppmbxarray; // Pointer to array of pointers to mailboxes
+ 427              		.loc 1 35 0
+ 428 0004 2DE9F041 		push	{r4, r5, r6, r7, r8, lr}
+ 429              	.LCFI8:
+ 430              		.cfi_def_cfa_offset 24
+ 431              		.cfi_offset 4, -24
+ 432              		.cfi_offset 5, -20
+ 433              		.cfi_offset 6, -16
+ 434              		.cfi_offset 7, -12
+ 435              		.cfi_offset 8, -8
+ 436              		.cfi_offset 14, -4
+ 437 0008 0546     		mov	r5, r0
+  40:Ourwares/MailboxTask.c **** 
+ 438              		.loc 1 40 0
+ 439 000a 0029     		cmp	r1, #0
+ 440 000c 43D0     		beq	.L40
+ 441 000e 0E46     		mov	r6, r1
+  42:Ourwares/MailboxTask.c **** 
+ 442              		.loc 1 42 0
+ 443 0010 FFF7FEFF 		bl	vPortEnterCritical
+ 444              	.LVL53:
+  45:Ourwares/MailboxTask.c **** 
+ 445              		.loc 1 45 0
+ 446 0014 95F8B140 		ldrb	r4, [r5, #177]	@ zero_extendqisi2
+ 447 0018 2049     		ldr	r1, .L42
+ 448 001a A300     		lsls	r3, r4, #2
+ 449 001c 2344     		add	r3, r3, r4
+ 450 001e 9A00     		lsls	r2, r3, #2
+ 451 0020 8B18     		adds	r3, r1, r2
+ 452 0022 1E82     		strh	r6, [r3, #16]	@ movhi
+  48:Ourwares/MailboxTask.c **** 
+ 453              		.loc 1 48 0
+ 454 0024 8D50     		str	r5, [r1, r2]
+  51:Ourwares/MailboxTask.c **** 	if (ppmbxarray == NULL) {taskEXIT_CRITICAL();return NULL;}
+ 455              		.loc 1 51 0
+ 456 0026 0421     		movs	r1, #4
+ 457 0028 3046     		mov	r0, r6
+ 458 002a FFF7FEFF 		bl	calloc
+ 459              	.LVL54:
+  52:Ourwares/MailboxTask.c **** 
+ 460              		.loc 1 52 0
+ 461 002e 8046     		mov	r8, r0
+ 462 0030 20B9     		cbnz	r0, .L37
+  52:Ourwares/MailboxTask.c **** 
+ 463              		.loc 1 52 0 is_stmt 0 discriminator 1
+ 464 0032 FFF7FEFF 		bl	vPortExitCritical
+ 465              	.LVL55:
+ 466 0036 0020     		movs	r0, #0
+ 467 0038 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ARM GAS  /tmp/cch3qXt2.s 			page 17
+
+
+ 468              	.LVL56:
+ 469              	.L37:
+  55:Ourwares/MailboxTask.c **** 
+ 470              		.loc 1 55 0 is_stmt 1
+ 471 003c 184B     		ldr	r3, .L42+4
+ 472 003e 1968     		ldr	r1, [r3]
+ 473 0040 21B9     		cbnz	r1, .L38
+  55:Ourwares/MailboxTask.c **** 
+ 474              		.loc 1 55 0 is_stmt 0 discriminator 1
+ 475 0042 FFF7FEFF 		bl	vPortExitCritical
+ 476              	.LVL57:
+ 477 0046 0020     		movs	r0, #0
+ 478 0048 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 479              	.LVL58:
+ 480              	.L38:
+  59:Ourwares/MailboxTask.c **** 
+ 481              		.loc 1 59 0 is_stmt 1
+ 482 004c 0122     		movs	r2, #1
+ 483 004e A240     		lsls	r2, r2, r4
+ 484 0050 2846     		mov	r0, r5
+ 485              	.LVL59:
+ 486 0052 FFF7FEFF 		bl	can_iface_mbx_init
+ 487              	.LVL60:
+ 488 0056 114F     		ldr	r7, .L42
+ 489 0058 04EB8404 		add	r4, r4, r4, lsl #2
+ 490 005c A300     		lsls	r3, r4, #2
+ 491 005e 3B44     		add	r3, r3, r7
+ 492 0060 9860     		str	r0, [r3, #8]
+  62:Ourwares/MailboxTask.c **** 
+ 493              		.loc 1 62 0
+ 494 0062 95F8B130 		ldrb	r3, [r5, #177]	@ zero_extendqisi2
+ 495 0066 9900     		lsls	r1, r3, #2
+ 496 0068 C818     		adds	r0, r1, r3
+ 497 006a 8200     		lsls	r2, r0, #2
+ 498 006c 1046     		mov	r0, r2
+ 499 006e 3A44     		add	r2, r2, r7
+ 500 0070 C2F80480 		str	r8, [r2, #4]
+  65:Ourwares/MailboxTask.c **** 
+ 501              		.loc 1 65 0
+ 502 0074 1682     		strh	r6, [r2, #16]	@ movhi
+  68:Ourwares/MailboxTask.c **** 
+ 503              		.loc 1 68 0
+ 504 0076 0246     		mov	r2, r0
+ 505 0078 3A44     		add	r2, r2, r7
+ 506 007a 0023     		movs	r3, #0
+ 507 007c 5382     		strh	r3, [r2, #18]	@ movhi
+  71:Ourwares/MailboxTask.c **** 	return &mbxcannum[pctl->canidx];
+ 508              		.loc 1 71 0
+ 509 007e FFF7FEFF 		bl	vPortExitCritical
+ 510              	.LVL61:
+  72:Ourwares/MailboxTask.c **** }
+ 511              		.loc 1 72 0
+ 512 0082 95F8B130 		ldrb	r3, [r5, #177]	@ zero_extendqisi2
+ 513 0086 03EB8303 		add	r3, r3, r3, lsl #2
+ 514 008a 9800     		lsls	r0, r3, #2
+ 515 008c 3844     		add	r0, r0, r7
+ 516 008e BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ARM GAS  /tmp/cch3qXt2.s 			page 18
+
+
+ 517              	.LVL62:
+ 518              	.L39:
+ 519              	.LCFI9:
+ 520              		.cfi_def_cfa_offset 0
+ 521              		.cfi_restore 4
+ 522              		.cfi_restore 5
+ 523              		.cfi_restore 6
+ 524              		.cfi_restore 7
+ 525              		.cfi_restore 8
+ 526              		.cfi_restore 14
+  38:Ourwares/MailboxTask.c **** 
+ 527              		.loc 1 38 0
+ 528 0092 0020     		movs	r0, #0
+ 529              	.LVL63:
+  73:Ourwares/MailboxTask.c **** /* *************************************************************************
+ 530              		.loc 1 73 0
+ 531 0094 7047     		bx	lr
+ 532              	.LVL64:
+ 533              	.L40:
+ 534              	.LCFI10:
+ 535              		.cfi_def_cfa_offset 24
+ 536              		.cfi_offset 4, -24
+ 537              		.cfi_offset 5, -20
+ 538              		.cfi_offset 6, -16
+ 539              		.cfi_offset 7, -12
+ 540              		.cfi_offset 8, -8
+ 541              		.cfi_offset 14, -4
+  40:Ourwares/MailboxTask.c **** 
+ 542              		.loc 1 40 0
+ 543 0096 0020     		movs	r0, #0
+ 544              	.LVL65:
+  73:Ourwares/MailboxTask.c **** /* *************************************************************************
+ 545              		.loc 1 73 0
+ 546 0098 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 547              	.LVL66:
+ 548              	.L43:
+ 549              		.align	2
+ 550              	.L42:
+ 551 009c 00000000 		.word	.LANCHOR0
+ 552 00a0 00000000 		.word	MailboxTaskHandle
+ 553              		.cfi_endproc
+ 554              	.LFE129:
+ 556              		.section	.text.MailboxTask_disable_notifications,"ax",%progbits
+ 557              		.align	2
+ 558              		.global	MailboxTask_disable_notifications
+ 559              		.thumb
+ 560              		.thumb_func
+ 562              	MailboxTask_disable_notifications:
+ 563              	.LFB131:
+ 103:Ourwares/MailboxTask.c **** 	return noteskip(pmbx, 1);
+ 564              		.loc 1 103 0
+ 565              		.cfi_startproc
+ 566              		@ args = 0, pretend = 0, frame = 0
+ 567              		@ frame_needed = 0, uses_anonymous_args = 0
+ 568              	.LVL67:
+ 569 0000 08B5     		push	{r3, lr}
+ 570              	.LCFI11:
+ARM GAS  /tmp/cch3qXt2.s 			page 19
+
+
+ 571              		.cfi_def_cfa_offset 8
+ 572              		.cfi_offset 3, -8
+ 573              		.cfi_offset 14, -4
+ 104:Ourwares/MailboxTask.c **** }
+ 574              		.loc 1 104 0
+ 575 0002 0121     		movs	r1, #1
+ 576 0004 FFF7FEFF 		bl	noteskip
+ 577              	.LVL68:
+ 105:Ourwares/MailboxTask.c **** struct CANNOTIFYLIST* MailboxTask_enable_notifications(struct MAILBOXCAN* pmbx)
+ 578              		.loc 1 105 0
+ 579 0008 08BD     		pop	{r3, pc}
+ 580              		.cfi_endproc
+ 581              	.LFE131:
+ 583 000a 00BF     		.section	.text.MailboxTask_enable_notifications,"ax",%progbits
+ 584              		.align	2
+ 585              		.global	MailboxTask_enable_notifications
+ 586              		.thumb
+ 587              		.thumb_func
+ 589              	MailboxTask_enable_notifications:
+ 590              	.LFB132:
+ 107:Ourwares/MailboxTask.c **** 	return noteskip(pmbx, 0);
+ 591              		.loc 1 107 0
+ 592              		.cfi_startproc
+ 593              		@ args = 0, pretend = 0, frame = 0
+ 594              		@ frame_needed = 0, uses_anonymous_args = 0
+ 595              	.LVL69:
+ 596 0000 08B5     		push	{r3, lr}
+ 597              	.LCFI12:
+ 598              		.cfi_def_cfa_offset 8
+ 599              		.cfi_offset 3, -8
+ 600              		.cfi_offset 14, -4
+ 108:Ourwares/MailboxTask.c **** }
+ 601              		.loc 1 108 0
+ 602 0002 0021     		movs	r1, #0
+ 603 0004 FFF7FEFF 		bl	noteskip
+ 604              	.LVL70:
+ 109:Ourwares/MailboxTask.c **** 
+ 605              		.loc 1 109 0
+ 606 0008 08BD     		pop	{r3, pc}
+ 607              		.cfi_endproc
+ 608              	.LFE132:
+ 610 000a 00BF     		.section	.text.MailboxTask_add,"ax",%progbits
+ 611              		.align	2
+ 612              		.global	MailboxTask_add
+ 613              		.thumb
+ 614              		.thumb_func
+ 616              	MailboxTask_add:
+ 617              	.LFB133:
+ 133:Ourwares/MailboxTask.c **** 	int j;
+ 618              		.loc 1 133 0
+ 619              		.cfi_startproc
+ 620              		@ args = 8, pretend = 0, frame = 0
+ 621              		@ frame_needed = 0, uses_anonymous_args = 0
+ 622              	.LVL71:
+ 623 0000 2DE9F84F 		push	{r3, r4, r5, r6, r7, r8, r9, r10, fp, lr}
+ 624              	.LCFI13:
+ 625              		.cfi_def_cfa_offset 40
+ARM GAS  /tmp/cch3qXt2.s 			page 20
+
+
+ 626              		.cfi_offset 3, -40
+ 627              		.cfi_offset 4, -36
+ 628              		.cfi_offset 5, -32
+ 629              		.cfi_offset 6, -28
+ 630              		.cfi_offset 7, -24
+ 631              		.cfi_offset 8, -20
+ 632              		.cfi_offset 9, -16
+ 633              		.cfi_offset 10, -12
+ 634              		.cfi_offset 11, -8
+ 635              		.cfi_offset 14, -4
+ 636 0004 9DF828A0 		ldrb	r10, [sp, #40]	@ zero_extendqisi2
+ 141:Ourwares/MailboxTask.c **** 	if (pctl  == NULL) return NULL;
+ 637              		.loc 1 141 0
+ 638 0008 0029     		cmp	r1, #0
+ 639 000a 00F0A080 		beq	.L61
+ 640 000e 0546     		mov	r5, r0
+ 641 0010 9046     		mov	r8, r2
+ 642 0012 9946     		mov	r9, r3
+ 643 0014 0E46     		mov	r6, r1
+ 142:Ourwares/MailboxTask.c **** 	if (pctl->canidx >= STM32MAXCANNUM) return NULL;
+ 644              		.loc 1 142 0
+ 645 0016 0028     		cmp	r0, #0
+ 646 0018 00F09C80 		beq	.L62
+ 143:Ourwares/MailboxTask.c **** 	if (mbxcannum[pctl->canidx].pctl == NULL) return NULL;
+ 647              		.loc 1 143 0
+ 648 001c 90F8B130 		ldrb	r3, [r0, #177]	@ zero_extendqisi2
+ 649              	.LVL72:
+ 650 0020 012B     		cmp	r3, #1
+ 651 0022 00F29A80 		bhi	.L63
+ 144:Ourwares/MailboxTask.c **** 
+ 652              		.loc 1 144 0
+ 653 0026 03EB8303 		add	r3, r3, r3, lsl #2
+ 654 002a 9A00     		lsls	r2, r3, #2
+ 655              	.LVL73:
+ 656 002c 4E4B     		ldr	r3, .L67
+ 657 002e 9B58     		ldr	r3, [r3, r2]
+ 658 0030 002B     		cmp	r3, #0
+ 659 0032 00F09580 		beq	.L64
+ 146:Ourwares/MailboxTask.c **** 		tskhandle = xTaskGetCurrentTaskHandle();
+ 660              		.loc 1 146 0
+ 661 0036 B8F1000F 		cmp	r8, #0
+ 662 003a 02D1     		bne	.L50
+ 147:Ourwares/MailboxTask.c **** 
+ 663              		.loc 1 147 0
+ 664 003c FFF7FEFF 		bl	xTaskGetCurrentTaskHandle
+ 665              	.LVL74:
+ 666 0040 8046     		mov	r8, r0
+ 667              	.LVL75:
+ 668              	.L50:
+ 150:Ourwares/MailboxTask.c **** 
+ 669              		.loc 1 150 0
+ 670 0042 95F8B130 		ldrb	r3, [r5, #177]	@ zero_extendqisi2
+ 671 0046 03EB8303 		add	r3, r3, r3, lsl #2
+ 672 004a 9A00     		lsls	r2, r3, #2
+ 673 004c 464B     		ldr	r3, .L67
+ 674 004e 1A44     		add	r2, r2, r3
+ 675 0050 5768     		ldr	r7, [r2, #4]
+ARM GAS  /tmp/cch3qXt2.s 			page 21
+
+
+ 676              	.LVL76:
+ 152:Ourwares/MailboxTask.c **** 
+ 677              		.loc 1 152 0
+ 678 0052 FFF7FEFF 		bl	vPortEnterCritical
+ 679              	.LVL77:
+ 156:Ourwares/MailboxTask.c **** 	{
+ 680              		.loc 1 156 0
+ 681 0056 0024     		movs	r4, #0
+ 682 0058 41E0     		b	.L51
+ 683              	.LVL78:
+ 684              	.L57:
+ 158:Ourwares/MailboxTask.c **** 		if (pmbx == NULL) morse_trap(20); // jic|debug
+ 685              		.loc 1 158 0
+ 686 005a 57F824B0 		ldr	fp, [r7, r4, lsl #2]
+ 687              	.LVL79:
+ 159:Ourwares/MailboxTask.c **** 		if (pmbx->ncan.can.id == canid)
+ 688              		.loc 1 159 0
+ 689 005e BBF1000F 		cmp	fp, #0
+ 690 0062 02D1     		bne	.L52
+ 159:Ourwares/MailboxTask.c **** 		if (pmbx->ncan.can.id == canid)
+ 691              		.loc 1 159 0 is_stmt 0 discriminator 1
+ 692 0064 1420     		movs	r0, #20
+ 693 0066 FFF7FEFF 		bl	morse_trap
+ 694              	.LVL80:
+ 695              	.L52:
+ 160:Ourwares/MailboxTask.c **** 		{ // Here, CAN id already has a mailbox, so a notification must be wanted by this task
+ 696              		.loc 1 160 0 is_stmt 1
+ 697 006a DBF80030 		ldr	r3, [fp]
+ 698 006e 9E42     		cmp	r6, r3
+ 699 0070 34D1     		bne	.L53
+ 162:Ourwares/MailboxTask.c **** 			{ // Here add a notification to the existing mailbox
+ 700              		.loc 1 162 0
+ 701 0072 B9F1000F 		cmp	r9, #0
+ 702 0076 2CD0     		beq	.L54
+ 166:Ourwares/MailboxTask.c **** 				if (pnotex == NULL){ taskEXIT_CRITICAL();return NULL;}
+ 703              		.loc 1 166 0
+ 704 0078 1021     		movs	r1, #16
+ 705 007a 0120     		movs	r0, #1
+ 706 007c FFF7FEFF 		bl	calloc
+ 707              	.LVL81:
+ 167:Ourwares/MailboxTask.c **** 
+ 708              		.loc 1 167 0
+ 709 0080 0146     		mov	r1, r0
+ 710 0082 20B9     		cbnz	r0, .L55
+ 167:Ourwares/MailboxTask.c **** 
+ 711              		.loc 1 167 0 is_stmt 0 discriminator 1
+ 712 0084 FFF7FEFF 		bl	vPortExitCritical
+ 713              	.LVL82:
+ 714 0088 0020     		movs	r0, #0
+ 715 008a BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 716              	.LVL83:
+ 717              	.L55:
+ 170:Ourwares/MailboxTask.c **** 				{ // This is the first notification for this mailbox.
+ 718              		.loc 1 170 0 is_stmt 1
+ 719 008e DBF83030 		ldr	r3, [fp, #48]
+ 720 0092 73B9     		cbnz	r3, .L56
+ 172:Ourwares/MailboxTask.c **** 					pnotex->pnext     = pnotex;	// Last on list points to self
+ARM GAS  /tmp/cch3qXt2.s 			page 22
+
+
+ 721              		.loc 1 172 0
+ 722 0094 CBF83000 		str	r0, [fp, #48]
+ 173:Ourwares/MailboxTask.c **** 					pnotex->tskhandle = tskhandle;
+ 723              		.loc 1 173 0
+ 724 0098 0860     		str	r0, [r1]
+ 174:Ourwares/MailboxTask.c ****  					pnotex->notebit   = notebit;  // Notification bit to use
+ 725              		.loc 1 174 0
+ 726 009a C0F80480 		str	r8, [r0, #4]
+ 175:Ourwares/MailboxTask.c **** 					pnotex->skip      = noteskip; // Skip notification flag
+ 727              		.loc 1 175 0
+ 728 009e C0F80890 		str	r9, [r0, #8]
+ 176:Ourwares/MailboxTask.c **** 					/* Here, there is no need to sort array on CANID for a binary lookup
+ 729              		.loc 1 176 0
+ 730 00a2 80F80CA0 		strb	r10, [r0, #12]
+ 179:Ourwares/MailboxTask.c **** 					return pmbx;
+ 731              		.loc 1 179 0
+ 732 00a6 FFF7FEFF 		bl	vPortExitCritical
+ 733              	.LVL84:
+ 180:Ourwares/MailboxTask.c **** 				}
+ 734              		.loc 1 180 0
+ 735 00aa 5846     		mov	r0, fp
+ 736 00ac BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 737              	.LVL85:
+ 738              	.L65:
+ 186:Ourwares/MailboxTask.c **** 
+ 739              		.loc 1 186 0
+ 740 00b0 1346     		mov	r3, r2
+ 741              	.LVL86:
+ 742              	.L56:
+ 186:Ourwares/MailboxTask.c **** 
+ 743              		.loc 1 186 0 is_stmt 0 discriminator 1
+ 744 00b2 1A68     		ldr	r2, [r3]
+ 745 00b4 9342     		cmp	r3, r2
+ 746 00b6 FBD1     		bne	.L65
+ 189:Ourwares/MailboxTask.c **** 					pnotex->pnext     = pnotex; // New block points to self
+ 747              		.loc 1 189 0 is_stmt 1
+ 748 00b8 1960     		str	r1, [r3]
+ 190:Ourwares/MailboxTask.c **** 					pnotex->tskhandle = tskhandle;
+ 749              		.loc 1 190 0
+ 750 00ba 0960     		str	r1, [r1]
+ 191:Ourwares/MailboxTask.c ****  					pnotex->notebit   = notebit;  // Notification bit to use
+ 751              		.loc 1 191 0
+ 752 00bc C1F80480 		str	r8, [r1, #4]
+ 192:Ourwares/MailboxTask.c **** 					pnotex->skip      = noteskip; // Skip notification flag
+ 753              		.loc 1 192 0
+ 754 00c0 C1F80890 		str	r9, [r1, #8]
+ 193:Ourwares/MailboxTask.c **** 					/* Here, there is no need to sort array on CANID for a binary lookup
+ 755              		.loc 1 193 0
+ 756 00c4 81F80CA0 		strb	r10, [r1, #12]
+ 196:Ourwares/MailboxTask.c **** 					return pmbx;
+ 757              		.loc 1 196 0
+ 758 00c8 FFF7FEFF 		bl	vPortExitCritical
+ 759              	.LVL87:
+ 197:Ourwares/MailboxTask.c **** 				}
+ 760              		.loc 1 197 0
+ 761 00cc 5846     		mov	r0, fp
+ 762 00ce BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ARM GAS  /tmp/cch3qXt2.s 			page 23
+
+
+ 763              	.LVL88:
+ 764              	.L54:
+ 202:Ourwares/MailboxTask.c **** 			return NULL;
+ 765              		.loc 1 202 0
+ 766 00d2 FFF7FEFF 		bl	vPortExitCritical
+ 767              	.LVL89:
+ 203:Ourwares/MailboxTask.c **** 		}
+ 768              		.loc 1 203 0
+ 769 00d6 0020     		movs	r0, #0
+ 770 00d8 BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 771              	.LVL90:
+ 772              	.L53:
+ 156:Ourwares/MailboxTask.c **** 	{
+ 773              		.loc 1 156 0 discriminator 2
+ 774 00dc 0134     		adds	r4, r4, #1
+ 775              	.LVL91:
+ 776              	.L51:
+ 156:Ourwares/MailboxTask.c **** 	{
+ 777              		.loc 1 156 0 is_stmt 0 discriminator 1
+ 778 00de 95F8B130 		ldrb	r3, [r5, #177]	@ zero_extendqisi2
+ 779 00e2 03EB8303 		add	r3, r3, r3, lsl #2
+ 780 00e6 9A00     		lsls	r2, r3, #2
+ 781 00e8 1F4B     		ldr	r3, .L67
+ 782 00ea 1A44     		add	r2, r2, r3
+ 783 00ec 538A     		ldrh	r3, [r2, #18]
+ 784 00ee 9C42     		cmp	r4, r3
+ 785 00f0 B3DB     		blt	.L57
+ 786              	.LVL92:
+ 217:Ourwares/MailboxTask.c **** 	if (pmbx == NULL){ taskEXIT_CRITICAL();return NULL;}
+ 787              		.loc 1 217 0 is_stmt 1
+ 788 00f2 4021     		movs	r1, #64
+ 789 00f4 0120     		movs	r0, #1
+ 790 00f6 FFF7FEFF 		bl	calloc
+ 791              	.LVL93:
+ 218:Ourwares/MailboxTask.c **** 
+ 792              		.loc 1 218 0
+ 793 00fa 8346     		mov	fp, r0
+ 794 00fc 20B9     		cbnz	r0, .L58
+ 218:Ourwares/MailboxTask.c **** 
+ 795              		.loc 1 218 0 is_stmt 0 discriminator 1
+ 796 00fe FFF7FEFF 		bl	vPortExitCritical
+ 797              	.LVL94:
+ 798 0102 0020     		movs	r0, #0
+ 799 0104 BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 800              	.LVL95:
+ 801              	.L58:
+ 220:Ourwares/MailboxTask.c **** 	pmbx->pnote = NULL;    // Redundant (calloc set it zero)
+ 802              		.loc 1 220 0 is_stmt 1
+ 803 0108 0023     		movs	r3, #0
+ 804 010a 4363     		str	r3, [r0, #52]
+ 221:Ourwares/MailboxTask.c **** 	pmbx->ncan. can.id = canid;   // Save CAN id
+ 805              		.loc 1 221 0
+ 806 010c 0363     		str	r3, [r0, #48]
+ 222:Ourwares/MailboxTask.c **** 	pmbx->ncan.toa     = DTWTIME; // Set current time for initial time-of-arrival
+ 807              		.loc 1 222 0
+ 808 010e 0660     		str	r6, [r0]
+ 223:Ourwares/MailboxTask.c **** 
+ARM GAS  /tmp/cch3qXt2.s 			page 24
+
+
+ 809              		.loc 1 223 0
+ 810 0110 164B     		ldr	r3, .L67+4
+ 811 0112 1B68     		ldr	r3, [r3]
+ 812 0114 4361     		str	r3, [r0, #20]
+ 225:Ourwares/MailboxTask.c **** 	{ // Here, a notification is requested.  Add first instance of notification  
+ 813              		.loc 1 225 0
+ 814 0116 B9F1000F 		cmp	r9, #0
+ 815 011a 13D0     		beq	.L59
+ 227:Ourwares/MailboxTask.c **** 		if (pnotex == NULL){ taskEXIT_CRITICAL();return NULL;}
+ 816              		.loc 1 227 0
+ 817 011c 1021     		movs	r1, #16
+ 818 011e 0120     		movs	r0, #1
+ 819              	.LVL96:
+ 820 0120 FFF7FEFF 		bl	calloc
+ 821              	.LVL97:
+ 228:Ourwares/MailboxTask.c **** 
+ 822              		.loc 1 228 0
+ 823 0124 0346     		mov	r3, r0
+ 824 0126 20B9     		cbnz	r0, .L60
+ 228:Ourwares/MailboxTask.c **** 
+ 825              		.loc 1 228 0 is_stmt 0 discriminator 1
+ 826 0128 FFF7FEFF 		bl	vPortExitCritical
+ 827              	.LVL98:
+ 828 012c 0020     		movs	r0, #0
+ 829 012e BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 830              	.LVL99:
+ 831              	.L60:
+ 230:Ourwares/MailboxTask.c **** 		pnotex->pnext     = pnotex;	// Last on list points to self
+ 832              		.loc 1 230 0 is_stmt 1
+ 833 0132 CBF83000 		str	r0, [fp, #48]
+ 231:Ourwares/MailboxTask.c **** 		pnotex->tskhandle = tskhandle; // Task to notify
+ 834              		.loc 1 231 0
+ 835 0136 1860     		str	r0, [r3]
+ 232:Ourwares/MailboxTask.c **** 		pnotex->notebit   = notebit;  // Notification bit to use
+ 836              		.loc 1 232 0
+ 837 0138 C0F80480 		str	r8, [r0, #4]
+ 233:Ourwares/MailboxTask.c **** 		pnotex->skip      = noteskip; // Skip notification flag
+ 838              		.loc 1 233 0
+ 839 013c C0F80890 		str	r9, [r0, #8]
+ 234:Ourwares/MailboxTask.c **** 	}
+ 840              		.loc 1 234 0
+ 841 0140 80F80CA0 		strb	r10, [r0, #12]
+ 842              	.LVL100:
+ 843              	.L59:
+ 239:Ourwares/MailboxTask.c **** 	return pmbx;
+ 844              		.loc 1 239 0
+ 845 0144 FFF7FEFF 		bl	vPortExitCritical
+ 846              	.LVL101:
+ 240:Ourwares/MailboxTask.c **** }
+ 847              		.loc 1 240 0
+ 848 0148 5846     		mov	r0, fp
+ 849 014a BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 850              	.LVL102:
+ 851              	.L61:
+ 141:Ourwares/MailboxTask.c **** 	if (pctl  == NULL) return NULL;
+ 852              		.loc 1 141 0
+ 853 014e 0020     		movs	r0, #0
+ARM GAS  /tmp/cch3qXt2.s 			page 25
+
+
+ 854              	.LVL103:
+ 855 0150 BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 856              	.LVL104:
+ 857              	.L62:
+ 142:Ourwares/MailboxTask.c **** 	if (pctl->canidx >= STM32MAXCANNUM) return NULL;
+ 858              		.loc 1 142 0
+ 859 0154 0020     		movs	r0, #0
+ 860              	.LVL105:
+ 861 0156 BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 862              	.LVL106:
+ 863              	.L63:
+ 143:Ourwares/MailboxTask.c **** 	if (mbxcannum[pctl->canidx].pctl == NULL) return NULL;
+ 864              		.loc 1 143 0
+ 865 015a 0020     		movs	r0, #0
+ 866              	.LVL107:
+ 867 015c BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 868              	.LVL108:
+ 869              	.L64:
+ 144:Ourwares/MailboxTask.c **** 
+ 870              		.loc 1 144 0
+ 871 0160 0020     		movs	r0, #0
+ 872              	.LVL109:
+ 241:Ourwares/MailboxTask.c **** 
+ 873              		.loc 1 241 0
+ 874 0162 BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 875              	.LVL110:
+ 876              	.L68:
+ 877 0166 00BF     		.align	2
+ 878              	.L67:
+ 879 0168 00000000 		.word	.LANCHOR0
+ 880 016c 041000E0 		.word	-536866812
+ 881              		.cfi_endproc
+ 882              	.LFE133:
+ 884              		.section	.text.xMailboxTaskCreate,"ax",%progbits
+ 885              		.align	2
+ 886              		.global	xMailboxTaskCreate
+ 887              		.thumb
+ 888              		.thumb_func
+ 890              	xMailboxTaskCreate:
+ 891              	.LFB134:
+ 250:Ourwares/MailboxTask.c ****  /* definition and creation of CanTask */
+ 892              		.loc 1 250 0
+ 893              		.cfi_startproc
+ 894              		@ args = 0, pretend = 0, frame = 32
+ 895              		@ frame_needed = 0, uses_anonymous_args = 0
+ 896              	.LVL111:
+ 897 0000 70B5     		push	{r4, r5, r6, lr}
+ 898              	.LCFI14:
+ 899              		.cfi_def_cfa_offset 16
+ 900              		.cfi_offset 4, -16
+ 901              		.cfi_offset 5, -12
+ 902              		.cfi_offset 6, -8
+ 903              		.cfi_offset 14, -4
+ 904 0002 88B0     		sub	sp, sp, #32
+ 905              	.LCFI15:
+ 906              		.cfi_def_cfa_offset 48
+ 907 0004 0646     		mov	r6, r0
+ARM GAS  /tmp/cch3qXt2.s 			page 26
+
+
+ 252:Ourwares/MailboxTask.c **** 
+ 908              		.loc 1 252 0
+ 909 0006 01AC     		add	r4, sp, #4
+ 910 0008 094D     		ldr	r5, .L71
+ 911 000a 0FCD     		ldmia	r5!, {r0, r1, r2, r3}
+ 912              	.LVL112:
+ 913 000c 0FC4     		stmia	r4!, {r0, r1, r2, r3}
+ 914 000e 95E80700 		ldmia	r5, {r0, r1, r2}
+ 915 0012 84E80700 		stmia	r4, {r0, r1, r2}
+ 254:Ourwares/MailboxTask.c **** 
+ 916              		.loc 1 254 0
+ 917 0016 0021     		movs	r1, #0
+ 918 0018 01A8     		add	r0, sp, #4
+ 919 001a FFF7FEFF 		bl	osThreadCreate
+ 920              	.LVL113:
+ 921 001e 054C     		ldr	r4, .L71+4
+ 922 0020 2060     		str	r0, [r4]
+ 256:Ourwares/MailboxTask.c **** 	return MailboxTaskHandle;
+ 923              		.loc 1 256 0
+ 924 0022 3146     		mov	r1, r6
+ 925 0024 FFF7FEFF 		bl	vTaskPrioritySet
+ 926              	.LVL114:
+ 258:Ourwares/MailboxTask.c **** /* *************************************************************************
+ 927              		.loc 1 258 0
+ 928 0028 2068     		ldr	r0, [r4]
+ 929 002a 08B0     		add	sp, sp, #32
+ 930              	.LCFI16:
+ 931              		.cfi_def_cfa_offset 16
+ 932              		@ sp needed
+ 933 002c 70BD     		pop	{r4, r5, r6, pc}
+ 934              	.LVL115:
+ 935              	.L72:
+ 936 002e 00BF     		.align	2
+ 937              	.L71:
+ 938 0030 00000000 		.word	.LANCHOR1
+ 939 0034 00000000 		.word	MailboxTaskHandle
+ 940              		.cfi_endproc
+ 941              	.LFE134:
+ 943              		.comm	MailboxTaskHandle,4,4
+ 944              		.global	mbxcannum
+ 945              		.section	.rodata
+ 946              		.align	2
+ 947              		.set	.LANCHOR1,. + 0
+ 948              	.LC2:
+ 949 0000 00000000 		.word	.LC0
+ 950 0004 00000000 		.word	StartMailboxTask
+ 951 0008 0000     		.short	0
+ 952 000a 0000     		.space	2
+ 953 000c 00000000 		.word	0
+ 954 0010 00010000 		.word	256
+ 955 0014 00000000 		.word	0
+ 956 0018 00000000 		.word	0
+ 957              		.section	.rodata.str1.4,"aMS",%progbits,1
+ 958              		.align	2
+ 959              	.LC0:
+ 960 0000 4D61696C 		.ascii	"MailboxTask\000"
+ 960      626F7854 
+ARM GAS  /tmp/cch3qXt2.s 			page 27
+
+
+ 960      61736B00 
+ 961              		.section	.bss.mbxcannum,"aw",%nobits
+ 962              		.align	2
+ 963              		.set	.LANCHOR0,. + 0
+ 966              	mbxcannum:
+ 967 0000 00000000 		.space	40
+ 967      00000000 
+ 967      00000000 
+ 967      00000000 
+ 967      00000000 
+ 968              		.text
+ 969              	.Letext0:
+ 970              		.file 2 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/machine/_default_t
+ 971              		.file 3 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/sys/_stdint.h"
+ 972              		.file 4 "Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f407xx.h"
+ 973              		.file 5 "Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f4xx.h"
+ 974              		.file 6 "Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_can.h"
+ 975              		.file 7 "Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/portmacro.h"
+ 976              		.file 8 "Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h"
+ 977              		.file 9 "Middlewares/Third_Party/FreeRTOS/Source/include/task.h"
+ 978              		.file 10 "Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS/cmsis_os.h"
+ 979              		.file 11 "Ourwares/common_misc.h"
+ 980              		.file 12 "Ourwares/common_can.h"
+ 981              		.file 13 "Ourwares/can_iface.h"
+ 982              		.file 14 "Ourwares/MailboxTask.h"
+ 983              		.file 15 "Drivers/CMSIS/Include/core_cm4.h"
+ 984              		.file 16 "Ourwares/payload_extract.h"
+ 985              		.file 17 "Ourwares/morse.h"
+ 986              		.file 18 "/home/deh/launchpad/gcc-arm-none-eabi-5_4-2016q3/arm-none-eabi/include/malloc.h"
+ARM GAS  /tmp/cch3qXt2.s 			page 28
+
+
+DEFINED SYMBOLS
+                            *ABS*:00000000 MailboxTask.c
+     /tmp/cch3qXt2.s:22     .text.lookup:00000000 $t
+     /tmp/cch3qXt2.s:26     .text.lookup:00000000 lookup
+     /tmp/cch3qXt2.s:88     .text.noteskip:00000000 $t
+     /tmp/cch3qXt2.s:92     .text.noteskip:00000000 noteskip
+     /tmp/cch3qXt2.s:156    .text.loadmbx:00000000 $t
+     /tmp/cch3qXt2.s:160    .text.loadmbx:00000000 loadmbx
+     /tmp/cch3qXt2.s:250    .text.StartMailboxTask:00000000 $t
+     /tmp/cch3qXt2.s:255    .text.StartMailboxTask:00000000 StartMailboxTask
+     /tmp/cch3qXt2.s:406    .text.StartMailboxTask:000000b4 $d
+     /tmp/cch3qXt2.s:412    .text.MailboxTask_add_CANlist:00000000 $t
+     /tmp/cch3qXt2.s:417    .text.MailboxTask_add_CANlist:00000000 MailboxTask_add_CANlist
+     /tmp/cch3qXt2.s:551    .text.MailboxTask_add_CANlist:0000009c $d
+                            *COM*:00000004 MailboxTaskHandle
+     /tmp/cch3qXt2.s:557    .text.MailboxTask_disable_notifications:00000000 $t
+     /tmp/cch3qXt2.s:562    .text.MailboxTask_disable_notifications:00000000 MailboxTask_disable_notifications
+     /tmp/cch3qXt2.s:584    .text.MailboxTask_enable_notifications:00000000 $t
+     /tmp/cch3qXt2.s:589    .text.MailboxTask_enable_notifications:00000000 MailboxTask_enable_notifications
+     /tmp/cch3qXt2.s:611    .text.MailboxTask_add:00000000 $t
+     /tmp/cch3qXt2.s:616    .text.MailboxTask_add:00000000 MailboxTask_add
+     /tmp/cch3qXt2.s:879    .text.MailboxTask_add:00000168 $d
+     /tmp/cch3qXt2.s:885    .text.xMailboxTaskCreate:00000000 $t
+     /tmp/cch3qXt2.s:890    .text.xMailboxTaskCreate:00000000 xMailboxTaskCreate
+     /tmp/cch3qXt2.s:938    .text.xMailboxTaskCreate:00000030 $d
+     /tmp/cch3qXt2.s:966    .bss.mbxcannum:00000000 mbxcannum
+     /tmp/cch3qXt2.s:946    .rodata:00000000 $d
+     /tmp/cch3qXt2.s:958    .rodata.str1.4:00000000 $d
+     /tmp/cch3qXt2.s:962    .bss.mbxcannum:00000000 $d
+                     .debug_frame:00000010 $d
+
+UNDEFINED SYMBOLS
+xTaskGetCurrentTaskHandle
+payload_extract
+xTaskGenericNotifyFromISR
+can_iface_mbx_init
+morse_trap
+xTaskNotifyWait
+can_iface_get_CANmsg
+xTaskGenericNotify
+GatewayTaskHandle
+vPortEnterCritical
+calloc
+vPortExitCritical
+osThreadCreate
+vTaskPrioritySet
