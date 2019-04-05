@@ -91,7 +91,7 @@ struct ADCCALCOMMON
 	float sensor5vcalVdd;   // The 5v->Vdd divider ratio Vdd adjusted
 	float fvddcomp;      // 5->Vdd adjusted factor
 	float fvddrecip;
-	float f5vR_adc5;     // (V5volt * Ratio)/ADCsum[5volt supply]
+	float f5_Vddratio;     // (V5volt * Ratio)/ADCsum[5volt supply]
 
 	// Internal voltage reference
 	float vref;          // Vref: 1.18 min, 1.21 typ, 1.24 max
@@ -134,7 +134,7 @@ struct ADCVTEMPVREF
 /* Calibration constants */
 #define ADCCALIBSIZE 4 // Number of entries: none - 4th order polynomial
 union ADCCALIB
-{filttype
+{
 	 float    f[ADCCALIBSIZE];
 	uint32_t ui[ADCCALIBSIZE];
 	 int32_t  n[ADCCALIBSIZE];

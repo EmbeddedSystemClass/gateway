@@ -14,6 +14,7 @@ by the java program from the sql database.
 
 #include "adcparamsinit.h"
 #include "adcparams.h"
+#include "ADCTask.h"
 
 /* *************************************************************************
  * void adcparamsinit_init_common(struct ADCCALCOMMON* padccommon);
@@ -50,6 +51,17 @@ void adcparamsinit_init_common(struct ADCCALCOMMON* padccommon)
  *	@brief	: Load structs for compensation, calibration and filtering for ADC channels
  * @param	: pacsx = Pointer to struct "everything" for this ADC module
  * *************************************************************************/
+/* Reproduced for convenience
+   Calibration is applied after compensation adjustments. 
+#define ADC1PARAM_COMPTYPE_NONE      0     // No supply or temp compensation applied
+#define ADC1PARAM_COMPTYPE_RATIOVDD  1     // Vdd (3.3v nominal) ratiometric
+#define ADC1PARAM_COMPTYPE_RATIO5V   2     // 5v ratiometric with 5->Vdd measurement
+#define ADC1PARAM_COMPTYPE_RATIO5VNO 3     // 5v ratiometric without 5->Vdd measurement
+#define ADC1PARAM_COMPTYPE_VOLTVDD   4     // Vdd (absolute), Vref compensation applied
+#define ADC1PARAM_COMPTYPE_VOLTVDDNO 5     // Vdd (absolute), no Vref compensation applied
+#define ADC1PARAM_COMPTYPE_VOLTV5    6     // 5v (absolute), with 5->Vdd measurement applied
+#define ADC1PARAM_COMPTYPE_VOLTV5NO  7     // 5v (absolute), without 5->Vdd measurement applied
+*/
 void adcparamsinit_init(struct ADCCHANNELSTUFF* pacsx)
 {
 	struct ADCCHANNELSTUFF* pacs; // Use pointer for convenience
@@ -59,7 +71,7 @@ void adcparamsinit_init(struct ADCCHANNELSTUFF* pacsx)
 
 	// Filter type, calibration option, compensation option. */
 	pacs->xprms.filttype  = ADCFILTERTYPE_IIR1;      // Single pole IIR
-	pacs->xprms.calibtype = ADC1PARAM_CALIBTYPE_RAW; // Raw; no calibration applied
+	pacs->xprms.calibtype = ADC1PARAM_CALIBTYPE_RAW_F; // Raw; no calibration applied
 	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_NONE; // No temperature compenstaion
 
 	// Calibration coefficients.
@@ -76,7 +88,7 @@ void adcparamsinit_init(struct ADCCHANNELSTUFF* pacsx)
 
 	// Filter type, calibration option, compensation option. */
 	pacs->xprms.filttype  = ADCFILTERTYPE_IIR1;      // Single pole IIR
-	pacs->xprms.calibtype = ADC1PARAM_CALIBTYPE_RAW; // Raw; no calibration applied
+	pacs->xprms.calibtype = ADC1PARAM_CALIBTYPE_RAW_F; // Raw; no calibration applied
 	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_NONE; // No temperature compenstaion
 
 	// Calibration coefficients.
@@ -94,7 +106,7 @@ void adcparamsinit_init(struct ADCCHANNELSTUFF* pacsx)
 	// Filter type, calibration option, compensation option. */
 	pacs->xprms.filttype  = ADCFILTERTYPE_IIR1;        // Single pole IIR
 	pacs->xprms.calibtype = ADC1PARAM_CALIBTYPE_OFSC;  // Offset & scale (poly ord 0 & 1)
-	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_VOLT5A; // 5v sensor; Vref w 5v supply reading compensation
+	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_RATIOVDD; // 5v sensor; Vref w 5v supply reading compensation
 
 	// Calibration coefficients.
 	pacs->cal.f[0] = 0.0;     // Offset
@@ -111,7 +123,7 @@ void adcparamsinit_init(struct ADCCHANNELSTUFF* pacsx)
 	// Filter type, calibration option, compensation option. */
 	pacs->xprms.filttype  = ADCFILTERTYPE_IIR1;        // Single pole IIR
 	pacs->xprms.calibtype = ADC1PARAM_CALIBTYPE_OFSC;  // Offset & scale (poly ord 0 & 1)
-	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_VOLT3AT; // 5v sensor; Vref abs w temp
+	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_RATIOVDD; // 5v sensor; Vref abs w temp
 
 	// Calibration coefficients.
 	pacs->cal.f[0] = 0.0;           // Offset
@@ -128,7 +140,7 @@ void adcparamsinit_init(struct ADCCHANNELSTUFF* pacsx)
 	// Filter type, calibration option, compensation option. */
 	pacs->xprms.filttype  = ADCFILTERTYPE_IIR1;        // Single pole IIR
 	pacs->xprms.calibtype = ADC1PARAM_CALIBTYPE_OFSC;  // Offset & scale (poly ord 0 & 1)
-	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_VOLT5AT; // 5v w Vref abs w temp
+	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_RATIO5V; // 5v w Vref abs w temp
 
 	// Calibration coefficients.
 	pacs->cal.f[0] = 2047.5; // Offset
@@ -145,7 +157,7 @@ void adcparamsinit_init(struct ADCCHANNELSTUFF* pacsx)
 	// Filter type, calibration option, compensation option. */
 	pacs->xprms.filttype  = ADCFILTERTYPE_IIR1;        // Single pole IIR
 	pacs->xprms.calibtype = ADC1PARAM_CALIBTYPE_OFSC;  // Offset & scale (poly ord 0 & 1)
-	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_VOLT5AT; // 5v w Vref abs w temp
+	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_VOLTV5; // 5v w Vref abs w temp
 
 	// Calibration coefficients.
 	pacs->cal.f[0] = 2047.5;  // Offset
@@ -162,7 +174,7 @@ void adcparamsinit_init(struct ADCCHANNELSTUFF* pacsx)
 	// Filter type, calibration option, compensation option. */
 	pacs->xprms.filttype  = ADCFILTERTYPE_IIR1;        // Single pole IIR
 	pacs->xprms.calibtype = ADC1PARAM_CALIBTYPE_OFSC;  // Offset & scale (poly ord 0 & 1)
-	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_VOLT5AT; // 5v w Vref abs w temp
+	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_RATIO5V; // 5v w Vref abs w temp
 
 	// Calibration coefficients.
 	pacs->cal.f[0] = 2047.5;  // Offset
@@ -179,7 +191,7 @@ void adcparamsinit_init(struct ADCCHANNELSTUFF* pacsx)
 	// Filter type, calibration option, compensation option. */
 	pacs->xprms.filttype  = ADCFILTERTYPE_IIR1;        // Single pole IIR
 	pacs->xprms.calibtype = ADC1PARAM_CALIBTYPE_OFSC;  // Offset & scale (poly ord 0 & 1)
-	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_VOLT5AT; // 5v w Vref abs w temp
+	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_VOLTVDD; // 5v w Vref abs w temp
 
 	// Calibration coefficients.
 	pacs->cal.f[0] = 0.0;     // Offset
@@ -197,7 +209,7 @@ void adcparamsinit_init(struct ADCCHANNELSTUFF* pacsx)
 	// Filter type, calibration option, compensation option. */
 	pacs->xprms.filttype  = ADCFILTERTYPE_IIR1;        // Single pole IIR
 	pacs->xprms.calibtype = ADC1PARAM_CALIBTYPE_OFSC;  // Offset & scale (poly ord 0 & 1)
-	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_VOLT5A; // 5v sensor; Vref w 5v supply reading compensation
+	pacs->xprms.comptype  = ADC1PARAM_COMPTYPE_VOLTVDD; // 5v sensor; Vref w 5v supply reading compensation
 
 	// Calibration coefficients.
 	pacs->cal.f[0] = 0.0;    // Offset

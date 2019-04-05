@@ -9,6 +9,7 @@ Not thread safe.
 */
 #include "adcparams.h"
 #include "adcparamsinit.h"
+#include "ADCTask.h"
 
 #include "DTW_counter.h"
 
@@ -115,30 +116,29 @@ adcdbg1 = DTWTIME;
 
 	pacom->fvddfilt = iir_f1_f(&adc1channelstuff[ADC1IDX_INTERNALVREF].fpw.iir_f1, pacom->fvdd);
 
-	pacom->fvddcomp = pacom->fvddfilt * pacom->sensor5vcalVdd;
+	pacom->fvddcomp = pacom->fvddfilt * pacom->sensor5vcalVdd; // Pre-compute for multple uses later
 
-	pacom->fvddrecip = 1.0/pacom->fvddfilt
+	pacom->fvddrecip = 1.0/pacom->fvddfilt; // Pre-compute for multple uses later
 
 	/* Scale up for fixed division, then convert to float and descale. */
 	pacom->f5_Vddratio = ( (adc1data.adcs1sum[ADC1IDX_INTERNALVREF] * (1<<12)) /
        adc1data.adcs1sum[ADC1IDX_5VOLTSUPPLY]);
 	pacom->f5_Vddratio *= (1.0/(1<<12));
 
-
 adcdbg2 = DTWTIME - adcdbg1;
 
 	return;
 }
-* *************************************************************************
+/* *************************************************************************
  * void adcparams_chan(uint8_t adcidx);
  *	@brief	: calibration, compensation, filtering for channels
  * @param	: adcidx = index into ADC1 array
  * *************************************************************************/
-void adcparams_internal(uint8_t adcidx)
+void adcparams_chan(uint8_t adcidx)
 {
 	struct ADCCHANNELSTUFF* pstuff = &adc1channelstuff[adcidx];
 	struct ADC1DATA* pdata         = &adc1data;
-	union ADCCALREADING* pread     = &adc1calreading[adcidx];
+	union ADCCALREADING* pread     = &adc1data.adc1calreading[adcidx];
 	uint16_t* psum16               = pdata->adcs1sum[adcidx];
 	struct ADCCALCOMMON* pacom     = &adcommon;
 
@@ -157,11 +157,11 @@ void adcparams_internal(uint8_t adcidx)
 */
 	if (pstuff->xprms.filttype == ADC1PARAM_CALIBTYPE_RAW_UI)
 	{
-		pread->ui = pdata->adcs1sum[acidx]; // adc sum as unsigned int
+		pread->ui = pdata->adcs1sum[adcidx]; // adc sum as unsigned int
 	}
 	else
 	{
-		pread->f = pdata->adcs1sum[acidx]; // Convert adc sum to float
+		pread->f = pdata->adcs1sum[adcidx]; // Convert adc sum to float
 	}
 
 	switch(pstuff->xprms.comptype)
@@ -182,7 +182,7 @@ void adcparams_internal(uint8_t adcidx)
 		break;
 
 	case ADC1PARAM_COMPTYPE_VOLTVDD:   // 4 Vdd (absolute), Vref compensation applied
-		pread->f *= 
+		pread->f *= 1; // TODO
 		break;
 
 	case ADC1PARAM_COMPTYPE_VOLTVDDNO: // 5 Vdd (absolute), no Vref compensation applied
@@ -190,10 +190,10 @@ void adcparams_internal(uint8_t adcidx)
 		break;
 
 	case ADC1PARAM_COMPTYPE_VOLTV5:    // 6 5v (absolute), with 5->Vdd measurement applied	
-		pread->f *=
+		pread->f *= 1; // TODO
 		break;	
 	case ADC1PARAM_COMPTYPE_VOLTV5NO:  // 7 5v (absolute), without 5->Vdd measurement applied
-		pread->f *= pacom->sensor5vcal * (1.0/ADCSEQNUM)
+		pread->f *= pacom->sensor5vcal * (1.0/ADCSEQNUM);
 		break;
 
 	default:

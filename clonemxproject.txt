@@ -20,8 +20,11 @@ cd newclone
        ./script-all <newclone>
 
    b. '.ioc' MX project file
+     STM32CubeMX uses the .ioc file to know the selections that are
+     present in the project.
 
      1) copy <oldproject>.ioc <newclone>.ioc
+        [As an alternative one could do a 'mv' to rename.]
 
      2) edit <newclone>.ioc  
 
@@ -33,5 +36,25 @@ c.  Makefile
 
     Change name (near beginning), e.g.--
       TARGET = dynamometer
+
+4. Making a local git repository
+
+  a.  Clean up any compiled junk from <oldproject>
+      cd build [compiled stuff goes into 'build']
+      ls  [Be sure you are in the build directory]
+      rm * 
+
+  b.  Remove files not applicable, e.g. .doc or .txt files.
+
+  c.  At <newclone> directory level, make a git
+       git init
+
+  d.  Add files--
+       git add *
+
+  c.  Commit--
+       git commit -m 'Initial addition of files' -a
+
+
 
 

@@ -30,6 +30,9 @@ This simplifies the issue of disabling of interrupts
 #include "can_iface.h"
 #include "DTW_counter.h"
 
+/* Abort feature--which may hang TX! */
+#define YESABORTCODE
+
 /* subroutine declarations */
 static void loadmbx2(struct CAN_CTLBLOCK* pctl);
 static void moveremove2(struct CAN_CTLBLOCK* pctl);
@@ -324,20 +327,17 @@ int can_driver_put(struct CAN_CTLBLOCK* pctl,struct CANRCVBUF *pcan,uint8_t maxr
 		if ( (pctl->pend.plinknext)->can.id < (pctl->mbx0 & ~0x1)  ) // Use mailbox shadow id
 #endif
 		{ // Here, new msg has higher CAN priority than msg in mailbox
-
-/* CAN transmit status register (CAN_TSR) ref manual --
-Set by software to abort the transmission request for the corresponding mailbox.
-Cleared by hardware when the mailbox becomes empty.
-Setting this bit has no effect when the mailbox is not pending for transmission. 
-*/
+/* &&&&&&&&&&&&&& BEGIN ABORT MODS &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&& */
+#ifdef YESABORTCODE
 			pctl->abortflag = 1;	// Set flag for interrupt routine use
-//			CAN_TSR(pctl->vcan) |= CAN_TSR_ABRQ0;	// Set Abort request for mailbox 0.
+			taskEXIT_CRITICAL(); // ==> NOTE: allow interrupts before setting abort!
 			HAL_CAN_AbortTxRequest(pctl->phcan, CAN_TX_MAILBOX0);
+			return 0;
 		}
+#endif
+/* &&&&&&&&&&&&&& END ABORT MODS &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&& */
 	}
-//	reenable_TXints(save);
-	taskEXIT_CRITICAL();
-
+	taskEXIT_CRITICAL(); // Re-enable interrupts
 	return 0;	// Success!
 }
 /*---------------------------------------------------------------------------------------------
@@ -460,9 +460,11 @@ volatile	struct CAN_POOLBLOCK* p = pctl->pend.plinknext;
 /* Transmission Mailbox 0 Abort callback. */
 void HAL_CAN_TxMailbox0AbortCallback(CAN_HandleTypeDef *phcan)
 {
+#ifdef YESABORTCODE
 	struct CAN_CTLBLOCK* pctl = getpctl(phcan);
 	loadmbx2(pctl);		// Load mailbox 0.  Mailbox should be available/empty.
 	pctl->abortflag = 0;
+#endif
 }
 
 /* Error callback */
