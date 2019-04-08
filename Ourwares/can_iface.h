@@ -1,6 +1,6 @@
 /******************************************************************************
 * File Name          : can_iface.h
-* Date First Issued  : 05-28-2015/01/02/2019
+* Date First Issued  : 05-28-2015
 * Board              : F103 or F4
 * Description        : Interface CAN FreeRTOS to STM32CubeMX HAL can driver 
 *******************************************************************************/
@@ -64,9 +64,6 @@ struct CANTAKEPTR
 // Enable the above interrupts
 //#define ENABLE_ALLCANINT   CAN_IER(CAN1) |= 0x13; CAN_IER(CAN1) |= 0x13
  
-/*  -- bits -- */
-#define	SOFTNART	0x01		// 1 = No retries (including arbitration); 0 = retries
-#define NOCANSEND	0x02		// 1 = Do not send to the CAN bus
 
 /* struct CAN_PARAMS holds the values used to setup the CAN registers during 'init' */
 // baud rate CAN_BTR[9:0]: brp = (pclk1_freq/(1 + TBS1 + TBS2)) / baudrate;
@@ -91,8 +88,9 @@ union CAN_X
 // bits	   xb[2]		// Use these bits to set some conditions (see below)
 // nosend  xb[1]	// Do not send: 0 = send; 1 = do NOT send on CAN bus (internal use only)
 /*  -- bits -- */
-#define	SOFTNART	0x01		// 1 = No retries (including arbitration); 0 = retries
-#define NOCANSEND	0x02		// 1 = Do not send to the CAN bus
+#define	SOFTNART	0x01     // 1 = No retries (including arbitration); 0 = retries
+#define NOCANSEND	0x02     // 1 = Do not send to the CAN bus
+#define CANMSGLOOPBACKBIT 0x04  // 1 = Loopback: copy of outgoing msg appears in incoming
 
 struct CAN_POOLBLOCK	// Used for common CAN TX/RX linked lists
 {

@@ -20,7 +20,7 @@ sequence number byte.
 
 CAN->PC direction CAN1 and CAN2 msgs are mixed together, except for the cases where
 the CANIDs are identical such as DMOC msgs, in which case the CAN2 msgs are tagged 
-as 29b address.
+as 29b address. [04/06/2019--not implemented]
 */
 #include "FreeRTOS.h"
 #include "task.h"
@@ -40,7 +40,9 @@ as 29b address.
 extern UART_HandleTypeDef huart2;
 extern UART_HandleTypeDef huart6;
 
-extern struct CAN_CTLBLOCK* pctl1;	// Pointer to CAN1 control block
+/* from 'main' */
+extern struct CAN_CTLBLOCK* pctl0;	// Pointer to CAN1 control block
+extern struct CAN_CTLBLOCK* pctl1;	// Pointer to CAN2 control block
 
 void StartGatewayTask(void const * argument);
 
@@ -70,13 +72,12 @@ osThreadId xGatewayTaskCreate(uint32_t taskpriority)
  * *************************************************************************/
 void StartGatewayTask(void const * argument)
 {
-
 //while(1==1) osDelay(10);
 
 	int i;
 
 	/* The lower order bits are reserved for incoming CAN module msg notifications. */
-	#define TSKGATEWAYBITc1	(1 << (STM32MAXCANNUM + 1))  // Task notification bit for huart2 incoming ascii CAN
+	#define TSKGATEWAYBITc1	(1 << (STM32MAXCANNUM + 2))  // Task notification bit for huart2 incoming ascii CAN
 
 	/* notification bits processed after a 'Wait. */
 	uint32_t noteused = 0;
@@ -88,13 +89,31 @@ void StartGatewayTask(void const * argument)
 	struct CANRCVBUFPLUS* pcanp;  // Basic CAN msg Plus error and seq number
 	struct CANRCVBUFN* pncan;
 
-	/* PC-to-CAN msg */
-	struct CANTXQMSG testtx;
-	testtx.pctl = pctl1;
+	/* PC, or other CAN, to CAN msg */
+	// Pre-load fixed elements for queue to CAN 'put' 
+
+	// CAN1
+	struct CANTXQMSG canqtx1;
+	canqtx1.pctl       = pctl0;
+	canqtx1.maxretryct = 8;
+	canqtx1.bits       = 0; // /NART
+
+   // CAN2
+	struct CANTXQMSG canqtx2;
+	canqtx2.pctl = pctl1;
+	canqtx2.maxretryct = 8;
+	canqtx2.bits       = 0; // /NART
+
+	// PC -> CAN1 (no PC->CAN2)
+	struct CANTXQMSG pccan1;
+	pccan1.pctl = pctl0;
+	pccan1.maxretryct = 8;
+	pccan1.bits       = 0; // /NART
 
 	/* Setup serial output buffers for uarts. */
 	struct SERIALSENDTASKBCB* pbuf2 = getserialbuf(&huart6,128);
 	struct SERIALSENDTASKBCB* pbuf3 = getserialbuf(&huart2,128);
+	struct SERIALSENDTASKBCB* pbuf4 = getserialbuf(&huart2,128);
 
 	/* Pointers into the CAN  msg circular buffer for each CAN module. */
 	struct CANTAKEPTR* ptake[STM32MAXCANNUM] = {NULL};
@@ -114,6 +133,11 @@ void StartGatewayTask(void const * argument)
 		if ((mbxcannum[i].pmbxarray != NULL) && (mbxcannum[i].pctl != NULL))
 		{
 			ptake[i] = can_iface_add_take(mbxcannum[i].pctl);
+			yprintf(&pbuf2,"\n\rStartGateway: mbxcannum[%i] setup OK. array: 0x%08X pctl: 0x%08X",i,mbxcannum[i].pmbxarray,mbxcannum[i].pctl);
+		}
+		else
+		{
+			yprintf(&pbuf2,"\n\rStartGateway: mbxcannum[%i] was not setup.",i);
 		}
 	}
 
@@ -124,34 +148,65 @@ void StartGatewayTask(void const * argument)
 		xTaskNotifyWait(noteused, 0, &GatewayTask_noteval, portMAX_DELAY);
 		noteused = 0;	// Accumulate bits in 'noteval' processed.
 
-		/* CAN->PC: Check notification bit for each CAN module */
-		for (i = 0; i < STM32MAXCANNUM; i++)
+		/* CAN1 incoming msg: Check notification bit */
+		i = 0;	// CAN1 index
 		{
 			if ((GatewayTask_noteval & (1 << i)) != 0)
 			{
-				noteused |= (GatewayTask_noteval & (1 << i)); // We handled the bit
-				
+				noteused |= (GatewayTask_noteval & (1 << i)); // We handled the bit			
 				do
 				{
 					/* Get pointer into CAN msg circular buffer */
 					pncan = can_iface_get_CANmsg(ptake[i]);
 					if (pncan != NULL)
-					{						
-						/* Convert binary to the ascii/hex format for PC. */
+					{			
+					/* Convert binary to the ascii/hex format for PC. */
+						canqtx2.can = pncan->can; // Save a local copy
 						xSemaphoreTake(pbuf3->semaphore, 5000);
-						gateway_CANtoPC(&pbuf3, &pncan->can);
+						gateway_CANtoPC(&pbuf3, &canqtx2.can);
+
+					/* === CAN1 -> PC === */			
 						vSerialTaskSendQueueBuf(&pbuf3); // Place on queue for usart2 sending
+
+					/* === CAN1 -> CAN2 === */
+						xQueueSendToBack(CanTxQHandle,&canqtx2,portMAX_DELAY);
+					}
+				} while (pncan != NULL);	// Drain the buffer
+			}
+		}
+		/* CAN2 incoming msg: Check notification bit */
+		i = 1;	// CAN2 index
+		{
+			if ((GatewayTask_noteval & (1 << i)) != 0)
+			{
+				noteused |= (GatewayTask_noteval & (1 << i)); // We handled the bit			
+				do
+				{
+					/* Get pointer into CAN msg circular buffer */
+					pncan = can_iface_get_CANmsg(ptake[i]);
+					if (pncan != NULL)
+					{			
+					/* Convert binary to the ascii/hex format for PC. */
+						canqtx1.can = pncan->can;	// Save a local copy
+						xSemaphoreTake(pbuf4->semaphore, 5000);
+						gateway_CANtoPC(&pbuf4, &canqtx1.can);
+
+					/* === CAN2 -> PC === */			
+						vSerialTaskSendQueueBuf(&pbuf4); // Place on queue for usart2 sending
+
+					/* === CAN1 -> CAN2 === */
+						xQueueSendToBack(CanTxQHandle,&canqtx1,portMAX_DELAY);
 					}
 				} while (pncan != NULL);	// Drain the buffer
 			}
 		}
 
-		/* PC->CAN: Handle incoming usart2 carrying ascii/hex CAN msgs */
+		/* PC incoming msg: Handle incoming usart2 carrying ascii/hex CAN msgs */
 		if ((GatewayTask_noteval & TSKGATEWAYBITc1) != 0)
-		{ // Here, one or more CAN msgs have been received
+		{ // Here, one or more PC->CAN msgs have been received
 			noteused |= TSKGATEWAYBITc1; // We handled the bit
 
-			/* Get incoming CAN msgs from PC and queue for output to CAN bus. */
+			/* Get incoming CAN msgs from PC and queue for output to CAN1 bus. */
 			do
 			{
 				pcanp = gateway_PCtoCAN_getCAN(prbcb2);
@@ -161,8 +216,8 @@ void StartGatewayTask(void const * argument)
 					if (pcanp->error == 0)
 					{
 						/* Place CAN msg on queue for sending to CAN bus */
-						testtx.can = pcanp->can;
-						xQueueSendToBack(CanTxQHandle,&testtx,portMAX_DELAY);
+						pccan1.can = pcanp->can;
+						xQueueSendToBack(CanTxQHandle,&pccan1,portMAX_DELAY);
 					}
 					else
 					{ // Here, one or more errors. List for the hapless Op to ponder
@@ -170,8 +225,8 @@ void StartGatewayTask(void const * argument)
 							pcanp->can.id,pcanp->can.dlc,pcanp->can.cd.ui[0]);
 
 						/* For test purposes: Place CAN msg on queue for sending to CAN bus */
-						testtx.can = pcanp->can;
-						xQueueSendToBack(CanTxQHandle,&testtx,portMAX_DELAY);
+						pccan1.can = pcanp->can;
+						xQueueSendToBack(CanTxQHandle,&pccan1,portMAX_DELAY);
 					}
 				}
 			} while ( pcanp != NULL);

@@ -96,8 +96,8 @@ __attribute__( ( always_inline ) ) __STATIC_INLINE uint32_t __get_SP(void)
 } 
 
 uint32_t timectr = 0;
-struct CAN_CTLBLOCK* pctl1;	// Pointer to CAN1 control block
-struct CAN_CTLBLOCK* pctl2;	// Pointer to CAN2 control block
+struct CAN_CTLBLOCK* pctl0;	// Pointer to CAN1 control block
+struct CAN_CTLBLOCK* pctl1;	// Pointer to CAN2 control block
 
 uint32_t debugTX1b;
 uint32_t debugTX1b_prev;
@@ -295,21 +295,22 @@ DiscoveryF4 LEDs --
 
 	/* Setup TX linked list for CAN  */
    // CAN1 (CAN_HandleTypeDef *phcan, uint8_t canidx, uint16_t numtx, uint16_t numrx);
-	pctl1 = can_iface_init(&hcan1, 1, 32, 64);
-	if (pctl1 == NULL) morse_trap(7); // Panic LED flashing
-	if (pctl1->ret < 0) morse_trap(77);
+	pctl0 = can_iface_init(&hcan1, 0, 32, 64);
+	if (pctl0 == NULL) morse_trap(7); // Panic LED flashing
+	if (pctl0->ret < 0) morse_trap(77);
 
 	// CAN 2
-	pctl2 = can_iface_init(&hcan2, 2, 8, 16);
-	if (pctl2 == NULL) morse_trap(8); // Panic LED flashing
+	pctl1 = can_iface_init(&hcan2, 1, 32, 64);
+	if (pctl1 == NULL) morse_trap(8); // Panic LED flashing
+	if (pctl1->ret < 0) morse_trap(78);
 
 	/* Setup CAN hardware filters to default to accept all ids. */
 	HAL_StatusTypeDef Cret;
-	Cret = canfilter_setup_first(1, &hcan1, 15); // CAN1
+	Cret = canfilter_setup_first(0, &hcan1, 15); // CAN1
 	if (Cret == HAL_ERROR) morse_trap(9);
 
-//	Cret = canfilter_setup_first(2, &hcan2, 15); // CAN2
-//	if (Cret == HAL_ERROR) morse_trap(10);
+	Cret = canfilter_setup_first(1, &hcan2, 15); // CAN2
+	if (Cret == HAL_ERROR) morse_trap(10);
 
 	/* Remove "accept all" CAN msgs and add specific id & mask, or id here. */
 	// See canfilter_setup.h
@@ -323,12 +324,12 @@ DiscoveryF4 LEDs --
 	/* Create Mailbox control block w 'take' pointer for each CAN module. */
 	struct MAILBOXCANNUM* pmbxret;
 	// (CAN1 control block pointer, size of circular buffer)
-	pmbxret = MailboxTask_add_CANlist(pctl1, 48);
+	pmbxret = MailboxTask_add_CANlist(pctl0, 32);
 	if (pmbxret == NULL) morse_trap(16);
 
 	// (CAN2 control block pointer, size of circular buffer)
-//	MailboxTask_add_CANlist(pctl1, 0); // Use default buff size
-//	if (pmbxret == NULL) morse_trap(17);
+	MailboxTask_add_CANlist(pctl1, 32); 
+	if (pmbxret == NULL) morse_trap(17);
 
 	/* Further initialization of mailboxes takes place when tasks start */
 
@@ -338,9 +339,15 @@ DiscoveryF4 LEDs --
 		CAN_IT_RX_FIFO0_MSG_PENDING |  \
 		CAN_IT_RX_FIFO1_MSG_PENDING    );
 
+	/* Select interrupts for CAN2 */
+	HAL_CAN_ActivateNotification(&hcan2, \
+		CAN_IT_TX_MAILBOX_EMPTY     |  \
+		CAN_IT_RX_FIFO0_MSG_PENDING |  \
+		CAN_IT_RX_FIFO1_MSG_PENDING    );
+
 	/* Start CANs */
 	HAL_CAN_Start(&hcan1); // CAN1
-//	HAL_CAN_Start(&hcan2); // CAN2
+	HAL_CAN_Start(&hcan2); // CAN2
 
 	/* ADC summing, calibration, etc. */
 	xADCTaskCreate(2);
@@ -774,7 +781,7 @@ void StartDefaultTask(void const * argument)
 
 	/* Test CAN msg */
 	struct CANTXQMSG testtx;
-	testtx.pctl = pctl1;
+	testtx.pctl = pctl0;
 	testtx.can.id = 0xc2200000;
 	testtx.can.dlc = 8;
 	for (i = 0; i < 8; i++)

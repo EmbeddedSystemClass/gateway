@@ -41,12 +41,12 @@ HAL_StatusTypeDef canfilter_setup_first(uint8_t cannum, CAN_HandleTypeDef *phcan
 
 	switch(cannum)
 	{
-	case 1:	p = &canfilt1; break; // CAN 1
-	case 2: 	p = &canfilt2; break; // CAN 2
-	case 3:	p = &canfilt3; break; // CAN 3
+	case 0:	p = &canfilt1; break; // CAN 1
+	case 1: 	p = &canfilt2; break; // CAN 2
+	case 2:	p = &canfilt3; break; // CAN 3
 	default:		return HAL_ERROR;
 	} // CAN1 & CAN3 start at zero
-	if (cannum != 2)
+	if (cannum != 1)
 	{
 		p->filt.FilterBank = 0;  // Filter bank number
 	}
