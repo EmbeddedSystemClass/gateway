@@ -112,6 +112,7 @@ extern osThreadId SerialTaskHandle;
 extern osThreadId CanTxTaskHandle;
 extern osThreadId CanRxTaskHandle;
 extern osThreadId SerialTaskReceiveHandle;
+extern osThreadId GatewayTaskHandle;
 
 uint8_t canflag;
 uint8_t canflag1;
@@ -248,7 +249,7 @@ DiscoveryF4 LEDs --
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 384);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityLow, 0, 384);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -259,20 +260,20 @@ DiscoveryF4 LEDs --
 	xSerialTaskSendCreate(0);	// Create task and set Task priority
 
 	/* Add bcb circular buffer to SerialTaskSend for usart6 */
-	#define NUMCIRBCB6  16 // Size of circular buffer of BCB for usart6
+	#define NUMCIRBCB6  32 // Size of circular buffer of BCB for usart6
 	ret = xSerialTaskSendAdd(&huart6, NUMCIRBCB6, 0); // char-by-char
 	if (ret < 0) morse_trap(1); // Panic LED flashing
 
 	/* Add bcb circular buffer to SerialTaskSend for usart2 */
-	#define NUMCIRBCB2  12 // Size of circular buffer of BCB for usart2
+	#define NUMCIRBCB2  32 // Size of circular buffer of BCB for usart2
 	ret = xSerialTaskSendAdd(&huart2, NUMCIRBCB2, 1); // dma
 	if (ret < 0) morse_trap(2); // Panic LED flashing
 
 	/* Setup semaphore for yprint and sprintf et al. */
 	yprintf_init();
 
-	/* Create serial receiving task of uart6 (char-by-char) */
-	xSerialTaskReceiveCreate(0);
+	/* Create serial receiving task. */
+	xSerialTaskReceiveCreate(0);  // Arg: = priority
 
 	/* USB-CDC buffering */
 	#define NUMCDCBUFF 3	// Number of CDC task local buffers
@@ -319,7 +320,7 @@ DiscoveryF4 LEDs --
 	xMailboxTaskCreate(1);
 
 	/* Create GatewayTask */
-	xGatewayTaskCreate(0);
+	xGatewayTaskCreate(1);
 
 	/* Create Mailbox control block w 'take' pointer for each CAN module. */
 	struct MAILBOXCANNUM* pmbxret;
@@ -803,7 +804,8 @@ extern volatile uint32_t adcdbg2;
 		if ((noteval & DEFAULTTSKBIT00) != 0)
 		{
 			noteused |= DEFAULTTSKBIT00;
-
+#define SHOWSTACKSPACE 
+#ifdef SHOWSTACKSPACE
 			/* Display the amount of unused stack space for tasks. */
 			yprintf(&pbuf2,"\n\r%4i Unused Task stack space--", ctr++);
 			stackwatermark_show(defaultTaskHandle,&pbuf2,"defaultTask--");
@@ -813,12 +815,13 @@ extern volatile uint32_t adcdbg2;
 			stackwatermark_show(MailboxTaskHandle,&pbuf2,"MailboxTask--");
 			stackwatermark_show(ADCTaskHandle    ,&pbuf2,"ADCTask------");
 			stackwatermark_show(SerialTaskReceiveHandle,&pbuf2,"SerialRcvTask");
+			stackwatermark_show(GatewayTaskHandle,&pbuf2,"GatewayTask--");
 
 			/* Heap usage (and test fp woking. */
 			heapsize = xPortGetFreeHeapSize();
 			yprintf(&pbuf2,"\n\rGetFreeHeapSize: total: %i used %i %3.1f%% free: %i",configTOTAL_HEAP_SIZE, heapsize,\
 				100.0*(float)heapsize/configTOTAL_HEAP_SIZE,(configTOTAL_HEAP_SIZE-heapsize));
-
+#endif
 			/* ==== CAN MSG sending test ===== */
 			/* Place test CAN msg to send on queue in a burst. */
 			/* Note: an odd makes the LED flash since it toggles on each msg. */

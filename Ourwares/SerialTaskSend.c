@@ -215,20 +215,21 @@ void StartSerialTaskSend(void* argument1)
 		{ // Here, HAL is going to reject it
   			/* Release buffer just sent to it can be reused. */
 			xSemaphoreGive(pssb->semaphore);\
-			return;
 		}
+		else
+		{
+			/* Add bcb to circular buffer for this uart/usart */
+			*ptmp->padd = pssb; //Copy BCB pointer into circular buffer
 
-		/* Add bcb to circular buffer for this uart/usart */
-		*ptmp->padd = pssb; //Copy BCB pointer into circular buffer
-
-		ptmp->padd += 1;	// Advance list ptr with wraparound
-		if (ptmp->padd == ptmp->pend) ptmp->padd = ptmp->pbegin;
-		{		
-      /* If HAL for this uart/usart is busy nothing happens. */
-			if (ptmp->dmaflag == 0) // send buffer via char-by-char or dma 
-	 			HAL_UART_Transmit_IT((UART_HandleTypeDef*)pssb->phuart,pssb->pbuf,pssb->size);
-			else		
- 				HAL_UART_Transmit_DMA((UART_HandleTypeDef*)pssb->phuart,pssb->pbuf,pssb->size);
+			ptmp->padd += 1;	// Advance list ptr with wraparound
+			if (ptmp->padd == ptmp->pend) ptmp->padd = ptmp->pbegin;
+			{		
+   	   /* If HAL for this uart/usart is busy nothing happens. */
+				if (ptmp->dmaflag == 0) // send buffer via char-by-char or dma 
+		 			HAL_UART_Transmit_IT((UART_HandleTypeDef*)pssb->phuart,pssb->pbuf,pssb->size);
+				else		
+ 					HAL_UART_Transmit_DMA((UART_HandleTypeDef*)pssb->phuart,pssb->pbuf,pssb->size);
+			}
 		}
 	}
 }
@@ -249,7 +250,7 @@ UBaseType_t uxPriority,
 TaskHandle_t *pxCreatedTask );
 */
 	BaseType_t ret = xTaskCreate(StartSerialTaskSend, "SerialTaskSend",\
-     96, NULL, taskpriority,\
+     192, NULL, taskpriority,\
      &SerialTaskHandle);
 	if (ret != pdPASS) return NULL;
 

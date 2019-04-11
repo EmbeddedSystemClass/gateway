@@ -39,7 +39,7 @@ extern CAN_HandleTypeDef hcan2;
 
 
 /* Abort feature--which may hang TX! */
-#define YESABORTCODE
+//#define YESABORTCODE
 
 /* Uncomment to cause all TX msgs to loop back */
 //#define CANMSGLOOPBACKALL

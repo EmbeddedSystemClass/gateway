@@ -29,7 +29,7 @@ osThreadId ADCTaskHandle;
  * *************************************************************************/
 osThreadId xADCTaskCreate(uint32_t taskpriority)
 {
- 	osThreadDef(ADCTask, StartADCTask, osPriorityNormal, 0, 128);
+ 	osThreadDef(ADCTask, StartADCTask, osPriorityNormal, 0, 256);
 	ADCTaskHandle = osThreadCreate(osThread(ADCTask), NULL);
 	vTaskPrioritySet( ADCTaskHandle, taskpriority );
 	return ADCTaskHandle;
@@ -55,6 +55,8 @@ void StartADCTask(void const * argument)
 	/* Get buffers, "our" control block, and start ADC/DMA running. */
 	struct ADCDMATSKBLK* pblk = adctask_init(&hadc1,TSK02BIT02,TSK02BIT03,&noteval);
 	if (pblk == NULL) {morse_trap(15);}
+
+//while(1==1) {osDelay(1);} // Debug: block
 
   /* Infinite loop */
   for(;;)
